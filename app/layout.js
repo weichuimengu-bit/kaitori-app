@@ -1,0 +1,18 @@
+export const metadata = {
+  title: "出張買取 - AI査定・古物台帳記録",
+  description: "AI査定と古物営業法に基づく台帳記録システム",
+};
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="ja">
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+      </head>
+      <body style={{ margin: 0, padding: 0, background: "#F4F2ED" }}>{children}</body>
+    </html>
+  );
+}
