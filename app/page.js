@@ -330,6 +330,4 @@ export default function Home(){
     <div style={{display:"flex",background:cl.surface,borderBottom:"1px solid "+cl.border,position:"sticky",top:0,zIndex:100}}>{tabs.map(t=>(<button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"11px 0",background:"none",border:"none",borderBottom:tab===t.id?"2px solid "+cl.accent:"2px solid transparent",color:tab===t.id?cl.accent:cl.textD,fontSize:12,fontWeight:tab===t.id?700:400,cursor:"pointer",fontFamily:font}}>{t.label}</button>))}</div>
     {tab==="appraisal"&&<AppraisalTab staffName={user.staffName}/>}
     {tab==="legal"&&<LegalTab staffName={user.staffName}/>}
-    <div style={{padding:"14px 16px 34px",textAlign:"center"}}><p style={{fontSize:10,color:cl.textD,margin:0}}>AI査定はウェブ検索による参考価格です。</p></div>
-  </div>);
-}
+   
