@@ -241,6 +241,14 @@ function AppraisalTab({staffName}){
   };
 
   return(<div style={{padding:16}}>
+  <Box title="査定情報">
+  <Input
+    label="顧客名"
+    value={customerName}
+    onChange={setCustomerName}
+    placeholder="例: 山田 太郎"
+  />
+</Box>
     <Box title="カテゴリを選択"><div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>{Object.entries(CATEGORY_CONFIG).map(([id,cfg])=>(<button key={id} onClick={()=>{setCatId(id);setFields({});setResult(null);setError("")}} style={{padding:"9px 10px",textAlign:"left",cursor:"pointer",background:catId===id?cl.accentBg:cl.surfAlt,border:"1px solid "+(catId===id?cl.accentL:cl.border),borderRadius:6}}><span style={{fontSize:12,fontWeight:600,color:catId===id?cl.accent:cl.text,display:"block",fontFamily:font}}>{cfg.label}</span><span style={{fontSize:10,color:cl.textD,fontFamily:font}}>{cfg.examples}</span></button>))}</div></Box>
     {catId&&config&&<>
       {config.authGuide&&<AuthGuide authGuide={config.authGuide}/>}
