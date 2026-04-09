@@ -163,23 +163,65 @@ const font="'Noto Sans JP',sans-serif";
 const fmt=n=>(!n&&n!==0)?"---":"¥"+Number(n).toLocaleString();
 
 // ─── AI Appraisal ───────────────────────────────────────────────────
-async function callAppraisal({category,fields,condition,imageBase64}){
-  const content=[];
-  if(imageBase64) content.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:imageBase64}});
-  const ft=Object.entries(fields).filter(([,v])=>v).map(([k,v])=>"- "+k+": "+v).join("\n");
-  let p="あなたはプロの買取査定士です。ウェブ検索で最新の中古相場を必ず調べてから査定してください。\n";
-  if(imageBase64) p+="添付画像も参考にしてください。\n\n";
-  p+="カテゴリ: "+(category||"不明")+"\n状態: "+(condition||"不明")+"\n\n商品詳細:\n"+(ft||"画像から判断");
-  p+='\n\nJSONのみ回答:\n{"identified_item":"商品名","min_price":0,"max_price":0,"recommended_price":0,"market_price":0,"reasoning":"根拠","min_price_reason":"下限理由","max_price_reason":"上限理由","price_factors":["要因"],"market_trend":"上昇/安定/下降","trend_reason":"理由","confidence":"高/中/低","customer_explanation":"お客様向け説明3-4文"}';
-  content.push({type:"text",text:p});
-  const res=await fetch("/api/appraise",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content})});
-  const data=await res.json();
-  if(data.error) throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
-  if(!data.content) throw new Error("応答が空です");
-  const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
-  if(!txt) throw new Error("テキストが空です");
-  const m=txt.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
-  if(!m) throw new Error("解析失敗");
+async function callAppraisal({category,fields,condition,image}){
+  const content = [];
+  const supportedImageTypes = ["image/jpeg","image/png","image/gif","image/webp"];
+
+  if (image && image.base64 && image.mimeType && supportedImageTypes.includes(image.mimeType)) {
+    content.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: image.mimeType,
+        data: image.base64
+      }
+    });
+  }
+
+  const ft = Object.entries(fields)
+    .filter(([,v]) => v)
+    .map(([k,v]) => "- " + k + ": " + v)
+    .join("\n");
+
+  let p = "あなたはプロの買取査定士です。ウェブ検索で最新の中古相場を必ず調べてから査定してください。\n";
+  if (image && image.base64 && image.mimeType && supportedImageTypes.includes(image.mimeType)) {
+    p += "添付画像も参考にしてください。\n\n";
+  }
+  p += "カテゴリ: " + (category || "不明") + "\n状態: " + (condition || "不明") + "\n\n商品詳細:\n" + (ft || "画像から判断");
+  p += '\n\nJSONのみ回答:\n{"identified_item":"商品名","min_price":0,"max_price":0,"recommended_price":0,"market_price":0,"reasoning":"根拠","min_price_reason":"下限理由","max_price_reason":"上限理由","price_factors":["要因"],"market_trend":"上昇/安定/下降","trend_reason":"理由","confidence":"高/中/低","customer_explanation":"お客様向け説明3-4文"}';
+
+  content.push({ type: "text", text: p });
+
+  const apiUrl =
+    typeof window !== "undefined"
+      ? window.location.origin + "/api/appraise"
+      : "/api/appraise";
+
+  const res = await fetch(apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content })
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error || data));
+  }
+
+  if (data.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
+  if (!data.content) throw new Error("応答が空です");
+
+  const txt = (data.content || [])
+    .filter(b => b.type === "text")
+    .map(b => b.text)
+    .join("");
+
+  if (!txt) throw new Error("テキストが空です");
+
+  const m = txt.replace(/```json|```/g, "").trim().match(/\{[\s\S]*\}/);
+  if (!m) throw new Error("解析失敗");
+
   return JSON.parse(m[0]);
 }
 
