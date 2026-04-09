@@ -289,7 +289,7 @@ const resetForm=()=>{
   const save=async()=>{
     setSaving(true);setError("");setSaved("");
     try{
-      const data=await gasPost({action:"saveLedger",sellerName:visit.sellerName,sellerPhone:visit.sellerPhone,sellerAddress:visit.sellerAddress,staffName:visit.staffName,items:items.map(it=>({itemName:it.itemName,purchasePrice:it.purchasePrice,remarks:"身分証:"+visit.sellerIdType+" "+visit.sellerIdNumber+" / 確認者:"+visit.idVerifiedBy+(it.remarks?" / "+it.remarks:"")}))});
+      const data=await gasPost({action:"saveLedger",transactionDate: visit.date,sellerName:visit.sellerName,sellerPhone:visit.sellerPhone,sellerAddress:visit.sellerAddress,staffName:visit.staffName,items:items.map(it=>({itemName:it.itemName,purchasePrice:it.purchasePrice,remarks:"身分証:"+visit.sellerIdType+" "+visit.sellerIdNumber+" / 確認者:"+visit.idVerifiedBy+(it.remarks?" / "+it.remarks:"")}))});
       setSaved("保存完了（案件ID: "+data.caseId+"）");
       resetForm();
     }catch(e){setError(e.message||"保存に失敗しました")}
