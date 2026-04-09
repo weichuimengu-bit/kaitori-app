@@ -235,7 +235,7 @@ function AppraisalTab({staffName}){
       const data=await callAppraisal({category:config?.label||"",fields,condition:CONDITIONS.find(x=>x.id===cond)?.label||cond,imageBase64:images[0]?.base64||null});
       setResult(data);
       // 査定ログをGASに保存
-      try{await gasPost({action:"saveAppraisalLog",customerName:"",itemName:data.identified_item||fields.name||"",priceEstimate:fmt(data.recommended_price),staffName:staffName||"",remarks:config?.label||""})}catch(e){}
+      try{await gasPost({action:"saveAppraisalLog",customerName:customerName.trim(),itemName:data.identified_item||fields.name||"",priceEstimate:fmt(data.recommended_price),staffName:staffName||"",remarks:config?.label||""})}catch(e){}
     }catch(e){setError(e.message||"査定失敗")}
     setLoading(false);
   };
