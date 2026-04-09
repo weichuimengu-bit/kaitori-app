@@ -289,7 +289,9 @@ function LegalTab({staffName}){
     </Box>))}
     <div style={{marginBottom:14}}><Btn onClick={()=>setItems(p=>[...p,{...emptyItem}])} variant="secondary">+ 商品を追加</Btn></div>
 
-    <Btn onClick={save} disabled={!ok} loading={saving}>スプレッドシートに保存（{items.length}件）</Btn>
+    <Btn onClick={save} disabled={saving || (!ok && !saved)} loading={saving}>
+  {saved ? "保存完了" : "保存"}
+</Btn>
     {saved&&<div style={{marginTop:10,padding:12,background:"#F0F7F2",border:"1px solid "+cl.staffBorder,borderRadius:8}}><p style={{margin:0,fontSize:13,fontWeight:600,color:cl.success,fontFamily:font}}>{saved}</p></div>}
     {error&&<div style={{marginTop:10,padding:12,background:"#FDF2F0",border:"1px solid #E8C4BF",borderRadius:8}}><p style={{margin:0,fontSize:12,color:cl.danger,fontFamily:font}}>{error}</p></div>}
     {!ok&&<p style={{fontSize:11,color:cl.danger,textAlign:"center",marginTop:8,fontFamily:font}}>必須項目（*）と各商品の商品名・金額を入力してください</p>}
