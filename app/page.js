@@ -265,7 +265,19 @@ function LegalTab({staffName}){
 
   const visReq=["sellerName","sellerPhone","sellerAddress","sellerIdType","sellerIdNumber","staffName"];
   const ok=visReq.every(f=>visit[f]?.trim())&&items.every(it=>it.itemName?.trim()&&it.purchasePrice?.trim());
-
+const resetForm=()=>{
+  setVisit({
+    date:ds,
+    staffName:staffName||"",
+    sellerName:"",
+    sellerPhone:"",
+    sellerAddress:"",
+    sellerIdType:"",
+    sellerIdNumber:"",
+    idVerifiedBy:staffName||""
+  });
+  setItems([{...emptyItem}]);
+};
   const save=async()=>{
     setSaving(true);setError("");setSaved("");
     try{
