@@ -226,7 +226,7 @@ function PriceResult({result}){
 
 // ─── Appraisal Tab ──────────────────────────────────────────────────
 function AppraisalTab({staffName}){
-  const [catId,setCatId]=useState("");const [fields,setFields]=useState({});const [cond,setCond]=useState("");const [images,setImages]=useState([]);const [loading,setLoading]=useState(false);const [result,setResult]=useState(null);const [error,setError]=useState("");
+ const [customerName,setCustomerName]=useState(""); const [catId,setCatId]=useState("");const [fields,setFields]=useState({});const [cond,setCond]=useState("");const [images,setImages]=useState([]);const [loading,setLoading]=useState(false);const [result,setResult]=useState(null);const [error,setError]=useState("");
   const config=CATEGORY_CONFIG[catId];const hasImg=images.length>0;const hasReq=config?config.fields.filter(f=>f.required).every(f=>fields[f.key]?.trim()):false;const ok=catId&&(hasImg||hasReq);
 
   const run=async()=>{
