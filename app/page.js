@@ -342,15 +342,72 @@ function LoginScreen({onLogin}){
 
 // ─── Main App ───────────────────────────────────────────────────────
 export default function Home(){
-  const [user,setUser]=useState(null);const [tab,setTab]=useState("appraisal");const [mounted,setMounted]=useState(false);
+  const [user,setUser]=useState(null);
+  const [tab,setTab]=useState("appraisal");
+  const [mounted,setMounted]=useState(false);
+
   useEffect(()=>{setMounted(true)},[]);
-  if(!mounted)return null;
-  if(!user)return<LoginScreen onLogin={setUser}/>;
-  const tabs=[{id:"appraisal",label:"査定"},{id:"legal",label:"台帳記録"}];
-  return(<div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",background:cl.bg,fontFamily:font}}>
-    <style>{"@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}input,select,textarea{font-family:'Noto Sans JP',sans-serif}input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}"}</style>
-    <div style={{padding:"14px 16px",background:cl.surface,borderBottom:"1px solid "+cl.border,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><h1 style={{margin:0,fontSize:16,fontWeight:800,color:cl.accent,letterSpacing:1.5}}>出張買取</h1><p style={{margin:"1px 0 0",fontSize:10,color:cl.textD}}>{user.staffName}さん</p></div><button onClick={()=>setUser(null)} style={{background:"none",border:"1px solid "+cl.border,borderRadius:4,padding:"4px 10px",fontSize:10,color:cl.textD,cursor:"pointer",fontFamily:font}}>ログアウト</button></div>
-    <div style={{display:"flex",background:cl.surface,borderBottom:"1px solid "+cl.border,position:"sticky",top:0,zIndex:100}}>{tabs.map(t=>(<button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"11px 0",background:"none",border:"none",borderBottom:tab===t.id?"2px solid "+cl.accent:"2px solid transparent",color:tab===t.id?cl.accent:cl.textD,fontSize:12,fontWeight:tab===t.id?700:400,cursor:"pointer",fontFamily:font}}>{t.label}</button>))}</div>
-    {tab==="appraisal"&&<AppraisalTab staffName={user.staffName}/>}
-    {tab==="legal"&&<LegalTab staffName={user.staffName}/>}
-   
+
+  if(!mounted) return null;
+  if(!user) return <LoginScreen onLogin={setUser}/>;
+
+  const tabs=[
+    {id:"appraisal",label:"査定"},
+    {id:"legal",label:"台帳記録"}
+  ];
+
+  return(
+    <div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",background:cl.bg,fontFamily:font}}>
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}input,select,textarea{font-family:'Noto Sans JP',sans-serif}input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}"}</style>
+
+      <div style={{padding:"14px 16px",background:cl.surface,borderBottom:"1px solid "+cl.border,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <h1 style={{margin:0,fontSize:16,fontWeight:800,color:cl.accent,letterSpacing:1.5}}>出張買取</h1>
+          <p style={{margin:"1px 0 0",fontSize:10,color:cl.textD}}>{user.staffName}さん</p>
+        </div>
+
+        <button
+          onClick={()=>setUser(null)}
+          style={{
+            background:"none",
+            border:"1px solid "+cl.border,
+            borderRadius:4,
+            padding:"4px 10px",
+            fontSize:10,
+            color:cl.textD,
+            cursor:"pointer",
+            fontFamily:font
+          }}
+        >
+          ログアウト
+        </button>
+      </div>
+
+      <div style={{display:"flex",background:cl.surface,borderBottom:"1px solid "+cl.border,position:"sticky",top:0,zIndex:100}}>
+        {tabs.map(t=>(
+          <button
+            key={t.id}
+            onClick={()=>setTab(t.id)}
+            style={{
+              flex:1,
+              padding:"11px 0",
+              background:"none",
+              border:"none",
+              borderBottom:tab===t.id?"2px solid "+cl.accent:"2px solid transparent",
+              color:tab===t.id?cl.accent:cl.textD,
+              fontSize:12,
+              fontWeight:tab===t.id?700:400,
+              cursor:"pointer",
+              fontFamily:font
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab==="appraisal" && <AppraisalTab staffName={user.staffName}/>}
+      {tab==="legal" && <LegalTab staffName={user.staffName}/>}
+    </div>
+  );
+}
