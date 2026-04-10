@@ -479,10 +479,26 @@ try {
     try {
       const results = await callBulkAppraisal(bulkItems);
       setBulkResults(results);
-      for (const r of results) {
-        try { await gasPost({action:"saveAppraisalLog",customerName:bulkCustomerName.trim(),itemName:r.identified_item||"",priceEstimate:fmt(r.recommended_price),staffName:staffName||"",remarks:"一括査定",appraisalType:"一括"}); } catch(e){}
-      }
-    } catch(e) { setBulkError(e.message||"一括査定失敗"); }
+   // ── runBulk 内の gasPost 部分を以下に差し替え ──
+for (const r of results) {
+  try {
+    await gasPost({
+      action: "saveAppraisalLog",
+      customerName: bulkCustomerName.trim(),
+      itemName: r.identified_item || "",
+      priceEstimate: fmt(r.recommended_price),
+      minPrice: fmt(r.min_price),
+      maxPrice: fmt(r.max_price),
+      reasoning: r.reasoning || "",
+      customerExplanation: r.customer_explanation || "",
+      staffName: staffName || "",
+      remarks: "一括査定",
+      appraisalType: "一括",
+      imageBase64: "",
+      imageMimeType: "",
+    });
+  } catch(e) {}
+}    } catch(e) { setBulkError(e.message||"一括査定失敗"); }
     setBulkLoading(false);
   };
 
