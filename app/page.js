@@ -160,7 +160,6 @@ const CONDITIONS = [
   { id: "C", label: "C やや難", desc: "傷・汚れあり" },
   { id: "D", label: "D 難あり", desc: "大きな傷・破損" },
 ];
-
 const ID_TYPES = ["運転免許証","マイナンバーカード","パスポート","住民基本台帳カード","健康保険証","在留カード","特別永住者証明書"];
 const ID_VERIFY_METHODS = ["対面確認","コピー取得","番号記録"];
 
@@ -198,46 +197,102 @@ function getPriceMsg(inputPrice, minPrice, maxPrice) {
   return null;
 }
 
+// ─── AI査定プロンプト生成 ─────────────────────────────────────────────
+function buildAppraisalPrompt(category, fields, condition, hasImage) {
+  const ft = Object.entries(fields).filter(([,v])=>v).map(([k,v])=>"- "+k+": "+v).join("\n");
+  const noAccessories = !fields.accessories || fields.accessories.trim() === "";
+  const hasConditionDetail = fields.condition_detail && fields.condition_detail.trim().length > 0;
+  const itemLabel = (fields.brand ? fields.brand + " " : "") + (fields.name || category || "");
+
+  return `あなたは出張買取専門のプロ査定士です。以下の手順で査定してください。
+
+【手順1】ウェブ検索で「${itemLabel} 買取価格 相場 ${new Date().getFullYear()}」を必ず検索し、複数の買取店・オークション・フリマの実勢価格を確認する。
+
+【手順2】以下の買取業の基本原則に従い、減額要因を厳密に評価する：
+・買取後の再販コスト（クリーニング・点検・撮影・掲載・人件費）が必ず発生する
+・在庫リスク（すぐ売れるとは限らない／保管コストが発生する）
+・資金拘束リスク（買取から販売まで数週間〜数ヶ月かかる場合がある）
+・万が一の返品・クレーム・真贋問題への対応コスト
+${noAccessories ? "・【付属品なし】箱・保証書・付属品が揃っていないため、相場比15〜30%の減額が業界標準。必ず減額理由として反映すること。" : ""}
+${hasConditionDetail ? `・【状態の詳細あり】「${fields.condition_detail}」という状態が記録されている。この具体的な傷・汚れ・ダメージを減額理由に明示すること。` : ""}
+・状態ランク「${condition || "不明"}」に応じた相場下落率を適用する（SとDでは価格が大きく異なる）
+
+【手順3】customer_explanation（お客様向け説明文）は以下の方針で生成する：
+・丁寧・誠実なトーンを保ちながら、減額理由を「なるほど」と思ってもらえる形で具体的に説明する
+・「買取後に弊社でかかるクリーニング・点検・販売にかかる費用を考慮した価格です」という業界の実情を自然に盛り込む
+${noAccessories ? "・付属品がない点は「付属品（箱・保証書など）が揃っているとさらに高くご提示できるのですが、今回はない分を考慮させていただきました」と前向きに伝える" : ""}
+${hasConditionDetail ? `・傷・汚れは「${fields.condition_detail}という状態が確認できましたので、その点を査定額に反映しております」と具体的に言及する` : ""}
+・押しつけがましくならず、お客様の気持ちに寄り添ったトーンにする
+・最後に「それでもできる限り高くご提示したいと思っています」という買取意欲も添える
+・3〜4文で簡潔にまとめる
+
+カテゴリ: ${category || "不明"}
+状態ランク: ${condition || "不明"}
+${hasImage ? "※添付画像も状態確認に使用してください。" : ""}
+
+商品詳細:
+${ft || "（画像から判断）"}
+
+JSONのみ回答:
+{"identified_item":"商品名","min_price":0,"max_price":0,"recommended_price":0,"market_price":0,"reasoning":"根拠（減額理由・付属品・傷・業界コストを具体的に）","min_price_reason":"下限理由","max_price_reason":"上限理由","price_factors":["減額・加算要因"],"market_trend":"上昇/安定/下降","trend_reason":"理由","confidence":"高/中/低","customer_explanation":"お客様向け説明3-4文（減額理由・業界コスト・付属品・傷の言及を含む）"}`;
+}
+
 // ─── AI査定（単品） ───────────────────────────────────────────────────
 async function callAppraisal({ category, fields, condition, image }) {
   const content = [];
   const supportedTypes = ["image/jpeg","image/png","image/gif","image/webp"];
-  if (image?.base64 && image?.mimeType && supportedTypes.includes(image.mimeType)) {
+  const hasImage = !!(image?.base64 && image?.mimeType && supportedTypes.includes(image.mimeType));
+  if (hasImage) {
     content.push({ type:"image", source:{ type:"base64", media_type:image.mimeType, data:image.base64 } });
   }
-  const ft = Object.entries(fields).filter(([,v])=>v).map(([k,v])=>"- "+k+": "+v).join("\n");
-  let p = "あなたはプロの買取査定士です。ウェブ検索で最新の中古相場を必ず調べてから査定してください。\n";
-  if (image?.base64 && image?.mimeType && supportedTypes.includes(image.mimeType)) p += "添付画像も参考にしてください。\n\n";
-  p += "カテゴリ: "+(category||"不明")+"\n状態: "+(condition||"不明")+"\n\n商品詳細:\n"+(ft||"画像から判断");
-  p += '\n\nJSONのみ回答:\n{"identified_item":"商品名","min_price":0,"max_price":0,"recommended_price":0,"market_price":0,"reasoning":"根拠","min_price_reason":"下限理由","max_price_reason":"上限理由","price_factors":["要因"],"market_trend":"上昇/安定/下降","trend_reason":"理由","confidence":"高/中/低","customer_explanation":"お客様向け説明3-4文"}';
-  content.push({ type:"text", text:p });
-  const apiUrl = (typeof window!=="undefined"?window.location.origin:"")+"/api/appraise";
-  const res = await fetch(apiUrl,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content})});
+  const prompt = buildAppraisalPrompt(category, fields, condition, hasImage);
+  content.push({ type:"text", text:prompt });
+  const apiUrl = (typeof window !== "undefined" ? window.location.origin : "") + "/api/appraise";
+  const res = await fetch(apiUrl, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ content }) });
   const data = await res.json();
-  if (!res.ok) throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error||data));
-  if (data.error) throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+  if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error || data));
+  if (data.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
   if (!data.content) throw new Error("応答が空です");
-  const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+  const txt = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
   if (!txt) throw new Error("テキストが空です");
-  const m=txt.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
+  const m = txt.replace(/```json|```/g, "").trim().match(/\{[\s\S]*\}/);
   if (!m) throw new Error("解析失敗");
   return JSON.parse(m[0]);
 }
 
 // ─── AI査定（一括） ───────────────────────────────────────────────────
 async function callBulkAppraisal(itemList) {
-  const desc = itemList.map((it,i)=>[`【商品${i+1}】`,`品目: ${it.category||"不明"}`,`商品名: ${it.name||"不明"}`,`数量: ${it.quantity||1}点`,`特徴: ${it.feature||"なし"}`,`状態: ${it.condition||"不明"}`].join("\n")).join("\n\n");
-  const p = `あなたはプロの買取査定士です。ウェブ検索で最新の中古相場を必ず調べてから査定してください。\n以下の複数商品をまとめて査定してください。\n\n${desc}\n\nJSONのみ回答（配列）:\n[{"item_index":1,"identified_item":"商品名","recommended_price":0,"min_price":0,"max_price":0,"market_price":0,"confidence":"高/中/低","reasoning":"根拠","customer_explanation":"説明2文"}]`;
-  const content = [{type:"text",text:p}];
-  const apiUrl = (typeof window!=="undefined"?window.location.origin:"")+"/api/appraise";
-  const res = await fetch(apiUrl,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content})});
+  const desc = itemList.map((it, i) => [
+    `【商品${i+1}】`,
+    `品目: ${it.category || "不明"}`,
+    `商品名: ${it.name || "不明"}`,
+    `数量: ${it.quantity || 1}点`,
+    `特徴: ${it.feature || "なし"}`,
+    `状態: ${it.condition || "不明"}`,
+  ].join("\n")).join("\n\n");
+
+  const p = `あなたは出張買取専門のプロ査定士です。ウェブ検索で最新の中古相場を必ず調べてから査定してください。
+
+以下の複数商品をまとめて査定してください。各商品について：
+・再販コスト・在庫リスク・資金拘束コストを考慮した買取価格を算出する
+・付属品の有無・状態を考慮して減額を適切に反映する
+・customer_explanationは「業界のコスト実情」と「具体的な減額理由」を含む3文でまとめる
+
+${desc}
+
+JSONのみ回答（配列）:
+[{"item_index":1,"identified_item":"商品名","recommended_price":0,"min_price":0,"max_price":0,"market_price":0,"confidence":"高/中/低","reasoning":"根拠（減額理由を具体的に）","customer_explanation":"説明3文（業界コスト・減額理由含む）"}]`;
+
+  const content = [{ type:"text", text:p }];
+  const apiUrl = (typeof window !== "undefined" ? window.location.origin : "") + "/api/appraise";
+  const res = await fetch(apiUrl, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ content }) });
   const data = await res.json();
-  if (!res.ok) throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error||data));
-  if (data.error) throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+  if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error || data));
+  if (data.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
   if (!data.content) throw new Error("応答が空です");
-  const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+  const txt = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
   if (!txt) throw new Error("テキストが空です");
-  const m=txt.replace(/```json|```/g,"").trim().match(/\[[\s\S]*\]/);
+  const m = txt.replace(/```json|```/g, "").trim().match(/\[[\s\S]*\]/);
   if (!m) throw new Error("一括査定の解析に失敗しました");
   return JSON.parse(m[0]);
 }
@@ -248,7 +303,7 @@ function Input({ label, value, onChange, placeholder, required, multiline, type=
   return (
     <div style={{marginBottom:14}}>
       <label style={{display:"block",fontSize:12,fontWeight:600,color:cl.textM,marginBottom:5,fontFamily:font}}>
-        {label}{required&&<span style={{color:cl.danger,marginLeft:3}}>*</span>}
+        {label}{required && <span style={{color:cl.danger,marginLeft:3}}>*</span>}
       </label>
       {multiline
         ? <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={3} style={{...s,resize:"vertical"}} onFocus={e=>e.target.style.borderColor=cl.bFocus} onBlur={e=>e.target.style.borderColor=cl.border}/>
@@ -257,12 +312,11 @@ function Input({ label, value, onChange, placeholder, required, multiline, type=
     </div>
   );
 }
-
 function Sel({ label, value, onChange, options, required }) {
   return (
     <div style={{marginBottom:14}}>
       <label style={{display:"block",fontSize:12,fontWeight:600,color:cl.textM,marginBottom:5,fontFamily:font}}>
-        {label}{required&&<span style={{color:cl.danger,marginLeft:3}}>*</span>}
+        {label}{required && <span style={{color:cl.danger,marginLeft:3}}>*</span>}
       </label>
       <select value={value} onChange={e=>onChange(e.target.value)} style={{width:"100%",padding:"11px 14px",background:cl.surfAlt,border:"1px solid "+cl.border,borderRadius:6,color:cl.text,fontSize:14,fontFamily:font,outline:"none",boxSizing:"border-box"}}>
         <option value="">選択してください</option>
@@ -271,29 +325,26 @@ function Sel({ label, value, onChange, options, required }) {
     </div>
   );
 }
-
 function Btn({ onClick, children, disabled, loading, variant="primary", small }) {
   const st = {primary:{bg:cl.accent,co:cl.white,bd:"none"},secondary:{bg:cl.surface,co:cl.text,bd:"1px solid "+cl.border},danger:{bg:"#FDF2F0",co:cl.danger,bd:"1px solid #E8C4BF"}}[variant]||{bg:cl.accent,co:cl.white,bd:"none"};
   return (
     <button onClick={onClick} disabled={disabled||loading} style={{width:"100%",padding:small?"8px 12px":"14px",border:st.bd,borderRadius:8,fontSize:small?12:14,fontWeight:700,cursor:disabled?"not-allowed":"pointer",fontFamily:font,background:disabled?"#E0DDD6":st.bg,color:disabled?cl.textD:st.co}}>
-      {loading?<span style={{display:"inline-flex",alignItems:"center",gap:8}}><span style={{display:"inline-block",width:14,height:14,border:"2px solid currentColor",borderTopColor:"transparent",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>処理中...</span>:children}
+      {loading ? <span style={{display:"inline-flex",alignItems:"center",gap:8}}><span style={{display:"inline-block",width:14,height:14,border:"2px solid currentColor",borderTopColor:"transparent",borderRadius:"50%",animation:"spin .7s linear infinite"}}/> 処理中...</span> : children}
     </button>
   );
 }
-
 function Box({ title, sub, children, type }) {
   const bg={staff:cl.staffBg,auth:cl.authBg}[type]||cl.surface;
   const bd={staff:cl.staffBorder,auth:cl.authBorder}[type]||cl.border;
   const co={staff:cl.staffAccent,auth:cl.authAccent}[type]||cl.accent;
   return (
     <div style={{background:bg,borderRadius:10,border:"1px solid "+bd,padding:18,marginBottom:14}}>
-      {title&&<p style={{margin:"0 0 4px",fontSize:13,fontWeight:700,color:co,fontFamily:font}}>{title}</p>}
-      {sub&&<p style={{margin:"0 0 14px",fontSize:11,color:cl.textD,fontFamily:font}}>{sub}</p>}
+      {title && <p style={{margin:"0 0 4px",fontSize:13,fontWeight:700,color:co,fontFamily:font}}>{title}</p>}
+      {sub && <p style={{margin:"0 0 14px",fontSize:11,color:cl.textD,fontFamily:font}}>{sub}</p>}
       {children}
     </div>
   );
 }
-
 function ImageUploader({ images, setImages, photoGuide }) {
   const ref = useRef();
   const add = files => {
@@ -311,12 +362,11 @@ function ImageUploader({ images, setImages, photoGuide }) {
         <p style={{margin:0,fontSize:12,color:cl.textM,fontFamily:font}}>写真を追加</p>
         <input ref={ref} type="file" accept="image/*" multiple capture="environment" style={{display:"none"}} onChange={e=>add(e.target.files)}/>
       </div>
-      {images.length>0&&<div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>{images.map((img,i)=>(<div key={i} style={{position:"relative",width:64,height:64,borderRadius:6,overflow:"hidden",border:"1px solid "+cl.border}}><img src={img.preview} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/><button onClick={()=>setImages(p=>p.filter((_,j)=>j!==i))} style={{position:"absolute",top:1,right:1,width:18,height:18,borderRadius:"50%",background:"rgba(0,0,0,.5)",color:"#fff",border:"none",fontSize:10,cursor:"pointer",lineHeight:"16px",padding:0}}>x</button></div>))}</div>}
-      {photoGuide&&<div style={{marginTop:10,padding:"10px 12px",background:"#F8F6F1",borderRadius:6,border:"1px solid "+cl.border}}><p style={{margin:"0 0 6px",fontSize:11,fontWeight:600,color:cl.accent,fontFamily:font}}>撮影ガイド</p><p style={{margin:0,fontSize:11,color:cl.textM,fontFamily:font,lineHeight:1.8}}>{photoGuide.join(" / ")}</p></div>}
+      {images.length>0 && <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>{images.map((img,i)=>(<div key={i} style={{position:"relative",width:64,height:64,borderRadius:6,overflow:"hidden",border:"1px solid "+cl.border}}><img src={img.preview} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/><button onClick={()=>setImages(p=>p.filter((_,j)=>j!==i))} style={{position:"absolute",top:1,right:1,width:18,height:18,borderRadius:"50%",background:"rgba(0,0,0,.5)",color:"#fff",border:"none",fontSize:10,cursor:"pointer",lineHeight:"16px",padding:0}}>x</button></div>))}</div>}
+      {photoGuide && <div style={{marginTop:10,padding:"10px 12px",background:"#F8F6F1",borderRadius:6,border:"1px solid "+cl.border}}><p style={{margin:"0 0 6px",fontSize:11,fontWeight:600,color:cl.accent,fontFamily:font}}>撮影ガイド</p><p style={{margin:0,fontSize:11,color:cl.textM,fontFamily:font,lineHeight:1.8}}>{photoGuide.join(" / ")}</p></div>}
     </div>
   );
 }
-
 function AuthGuide({ authGuide }) {
   if (!authGuide) return null;
   return (
@@ -328,17 +378,19 @@ function AuthGuide({ authGuide }) {
     </Box>
   );
 }
-
 function PriceResult({ result }) {
   const trend = t => t==="上昇"?"↑ 上昇":t==="下降"?"↓ 下降":"→ 安定";
   return (
     <>
-      {result.identified_item&&<div style={{marginBottom:14,padding:12,background:cl.accentBg,borderRadius:8}}><p style={{margin:0,fontSize:11,color:cl.textM,fontFamily:font}}>識別商品</p><p style={{margin:"4px 0 0",fontSize:14,fontWeight:600,color:cl.text,fontFamily:font}}>{result.identified_item}</p></div>}
+      {result.identified_item && <div style={{marginBottom:14,padding:12,background:cl.accentBg,borderRadius:8}}><p style={{margin:0,fontSize:11,color:cl.textM,fontFamily:font}}>識別商品</p><p style={{margin:"4px 0 0",fontSize:14,fontWeight:600,color:cl.text,fontFamily:font}}>{result.identified_item}</p></div>}
       <div style={{background:cl.surface,borderRadius:10,border:"1px solid "+cl.accentL,padding:20,marginBottom:14}}>
         <div style={{textAlign:"center",marginBottom:16}}><p style={{fontSize:11,color:cl.textD,margin:"0 0 2px",fontFamily:font}}>推奨買取価格</p><p style={{fontSize:30,fontWeight:800,color:cl.accent,margin:0,fontFamily:font}}>{fmt(result.recommended_price)}</p></div>
         <div style={{marginBottom:16}}>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:11,color:cl.textD,fontFamily:font}}>下限</span><span style={{fontSize:11,color:cl.textD,fontFamily:font}}>上限</span></div>
-          <div style={{position:"relative",height:8,background:"#E8E4DC",borderRadius:4}}><div style={{position:"absolute",left:0,top:0,height:"100%",width:"100%",background:"linear-gradient(90deg,"+cl.danger+"40,"+cl.success+"40)",borderRadius:4}}/>{result.max_price>result.min_price&&(()=>{const p=((result.recommended_price-result.min_price)/(result.max_price-result.min_price))*100;return<div style={{position:"absolute",top:-3,left:Math.min(Math.max(p,5),95)+"%",transform:"translateX(-50%)",width:14,height:14,background:cl.accent,borderRadius:"50%",border:"2px solid "+cl.white,boxShadow:"0 1px 3px rgba(0,0,0,.2)"}}/>;})()}</div>
+          <div style={{position:"relative",height:8,background:"#E8E4DC",borderRadius:4}}>
+            <div style={{position:"absolute",left:0,top:0,height:"100%",width:"100%",background:"linear-gradient(90deg,"+cl.danger+"40,"+cl.success+"40)",borderRadius:4}}/>
+            {result.max_price>result.min_price&&(()=>{const p=((result.recommended_price-result.min_price)/(result.max_price-result.min_price))*100;return<div style={{position:"absolute",top:-3,left:Math.min(Math.max(p,5),95)+"%",transform:"translateX(-50%)",width:14,height:14,background:cl.accent,borderRadius:"50%",border:"2px solid "+cl.white,boxShadow:"0 1px 3px rgba(0,0,0,.2)"}}/>;})()}
+          </div>
           <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}><span style={{fontSize:13,fontWeight:700,color:cl.text,fontFamily:font}}>{fmt(result.min_price)}</span><span style={{fontSize:13,fontWeight:700,color:cl.text,fontFamily:font}}>{fmt(result.max_price)}</span></div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
@@ -348,11 +400,10 @@ function PriceResult({ result }) {
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{[["相場",fmt(result.market_price),cl.text],["動向",trend(result.market_trend),cl.text],["信頼度",result.confidence,result.confidence==="高"?cl.success:result.confidence==="低"?cl.danger:cl.accent]].map(([l,v,co])=>(<div key={l} style={{padding:"6px 8px",background:cl.surfAlt,borderRadius:6}}><p style={{fontSize:10,color:cl.textD,margin:0,fontFamily:font}}>{l}</p><p style={{fontSize:12,fontWeight:600,color:co,margin:"2px 0 0",fontFamily:font}}>{v}</p></div>))}</div>
       </div>
       <Box title="査定根拠"><p style={{fontSize:12,color:cl.text,margin:0,lineHeight:1.8,fontFamily:font}}>{result.reasoning}</p>{result.price_factors?.map((f,i)=><div key={i} style={{padding:"6px 10px",background:cl.surfAlt,borderRadius:4,marginTop:6,fontSize:11,color:cl.textM,fontFamily:font,borderLeft:"3px solid "+cl.accentL}}>{f}</div>)}</Box>
-      {result.customer_explanation&&<Box title="お客様への説明文" type="staff"><p style={{margin:0,fontSize:13,color:cl.text,lineHeight:2,fontFamily:font}}>{result.customer_explanation}</p></Box>}
+      {result.customer_explanation && <Box title="お客様への説明文" type="staff"><p style={{margin:0,fontSize:13,color:cl.text,lineHeight:2,fontFamily:font}}>{result.customer_explanation}</p></Box>}
     </>
   );
 }
-
 function BulkResultCard({ result, index }) {
   const [open, setOpen] = useState(false);
   return (
@@ -361,62 +412,41 @@ function BulkResultCard({ result, index }) {
         <div><p style={{margin:0,fontSize:12,fontWeight:700,color:cl.text,fontFamily:font}}>商品{index+1}：{result.identified_item||"不明"}</p><p style={{margin:"2px 0 0",fontSize:11,color:cl.textM,fontFamily:font}}>信頼度: {result.confidence} ／ 推奨: {fmt(result.recommended_price)}</p></div>
         <span style={{fontSize:18,color:cl.textD}}>{open?"▲":"▼"}</span>
       </div>
-      {open&&<div style={{padding:"12px 14px"}}>
+      {open && <div style={{padding:"12px 14px"}}>
         <div style={{display:"flex",gap:8,marginBottom:10}}>{[["下限",fmt(result.min_price),cl.danger],["推奨",fmt(result.recommended_price),cl.accent],["上限",fmt(result.max_price),cl.success]].map(([l,v,co])=>(<div key={l} style={{flex:1,padding:"8px 6px",background:cl.surfAlt,borderRadius:6,textAlign:"center"}}><p style={{margin:0,fontSize:10,color:cl.textD,fontFamily:font}}>{l}</p><p style={{margin:"2px 0 0",fontSize:13,fontWeight:700,color:co,fontFamily:font}}>{v}</p></div>))}</div>
         <p style={{margin:0,fontSize:11,color:cl.textM,lineHeight:1.7,fontFamily:font}}>{result.reasoning}</p>
-        {result.customer_explanation&&<div style={{marginTop:8,padding:"8px 10px",background:cl.staffBg,borderRadius:6,border:"1px solid "+cl.staffBorder}}><p style={{margin:0,fontSize:11,color:cl.text,lineHeight:1.7,fontFamily:font}}>{result.customer_explanation}</p></div>}
+        {result.customer_explanation && <div style={{marginTop:8,padding:"8px 10px",background:cl.staffBg,borderRadius:6,border:"1px solid "+cl.staffBorder}}><p style={{margin:0,fontSize:11,color:cl.text,lineHeight:1.7,fontFamily:font}}>{result.customer_explanation}</p></div>}
       </div>}
     </div>
   );
 }
 
-// ─── 台帳商品カード（買取金額メッセージ付き） ─────────────────────────
+// ─── 台帳商品カード ───────────────────────────────────────────────────
 function LedgerItemCard({ it, idx, itemCount, onUpdate, onDelete }) {
   const msg = getPriceMsg(it.purchasePrice, it.aiMinPrice, it.aiMaxPrice);
   const isUnder = msg?.type === "under";
-  const isOver = msg?.type === "over";
-
   return (
     <Box title={"商品 " + (idx + 1)}>
-      <Sel label="品目（カテゴリ）" value={it.category} onChange={v=>onUpdate(idx,"category",v)}
-        options={Object.values(CATEGORY_CONFIG).map(c=>({value:c.label,label:c.label}))} />
+      <Sel label="品目（カテゴリ）" value={it.category} onChange={v=>onUpdate(idx,"category",v)} options={Object.values(CATEGORY_CONFIG).map(c=>({value:c.label,label:c.label}))}/>
       <Input label="商品名" value={it.name} onChange={v=>onUpdate(idx,"name",v)} required placeholder="例: ロレックス デイトナ"/>
       <Input label="数量" value={it.quantity} onChange={v=>onUpdate(idx,"quantity",v)} placeholder="例: 1" type="number"/>
       <Input label="特徴・詳細" value={it.feature} onChange={v=>onUpdate(idx,"feature",v)} placeholder="色、付属品、状態など" multiline/>
       <Input label="買取金額（円）" value={it.purchasePrice} onChange={v=>onUpdate(idx,"purchasePrice",v)} type="number" required/>
-
-      {/* AI査定目安バッジ */}
       {it.aiEstimate && (
         <div style={{padding:"8px 12px",background:cl.accentBg,borderRadius:6,marginBottom:10,border:"1px solid "+cl.accentL}}>
           <p style={{margin:0,fontSize:11,color:cl.textM,fontFamily:font}}>
             AI査定目安（推奨）：<span style={{fontWeight:700,color:cl.accent}}>{it.aiEstimate}</span>
-            {it.aiMinPrice && it.aiMaxPrice && (
-              <span style={{color:cl.textD,marginLeft:6,fontSize:10}}>（下限 {fmt(it.aiMinPrice)} 〜 上限 {fmt(it.aiMaxPrice)}）</span>
-            )}
+            {it.aiMinPrice && it.aiMaxPrice && <span style={{color:cl.textD,marginLeft:6,fontSize:10}}>（下限 {fmt(it.aiMinPrice)} 〜 上限 {fmt(it.aiMaxPrice)}）</span>}
           </p>
         </div>
       )}
-
-      {/* 買取金額メッセージバナー */}
       {msg && (
-        <div style={{
-          padding:"12px 14px",
-          background: isUnder ? cl.warnBg : cl.overBg,
-          border:"1px solid "+(isUnder ? cl.warnBorder : cl.overBorder),
-          borderRadius:8, marginBottom:10,
-        }}>
-          <p style={{margin:0,fontSize:12,color:isUnder?cl.warnText:cl.overText,lineHeight:1.8,fontFamily:font,whiteSpace:"pre-line"}}>
-            {msg.text}
-          </p>
+        <div style={{padding:"12px 14px",background:isUnder?cl.warnBg:cl.overBg,border:"1px solid "+(isUnder?cl.warnBorder:cl.overBorder),borderRadius:8,marginBottom:10}}>
+          <p style={{margin:0,fontSize:12,color:isUnder?cl.warnText:cl.overText,lineHeight:1.8,fontFamily:font,whiteSpace:"pre-line"}}>{msg.text}</p>
         </div>
       )}
-
       <Input label="備考" value={it.remarks} onChange={v=>onUpdate(idx,"remarks",v)} placeholder="付属品、状態など" multiline/>
-      {itemCount > 1 && (
-        <div style={{marginTop:4}}>
-          <Btn onClick={()=>onDelete(idx)} variant="danger" small>この商品を削除</Btn>
-        </div>
-      )}
+      {itemCount > 1 && <div style={{marginTop:4}}><Btn onClick={()=>onDelete(idx)} variant="danger" small>この商品を削除</Btn></div>}
     </Box>
   );
 }
@@ -446,59 +476,65 @@ function AppraisalTab({ staffName, onSendToLedger }) {
   const singleOk = catId && (hasImg || hasReq);
   const bulkOk = bulkItems.every(it=>it.name.trim());
 
+  // 単品査定実行
   const runSingle = async () => {
     setLoading(true); setError(""); setResult(null);
     try {
-      const data = await callAppraisal({category:config?.label||"",fields,condition:CONDITIONS.find(x=>x.id===cond)?.label||cond,image:images[0]||null});
+      const data = await callAppraisal({
+        category: config?.label || "",
+        fields,
+        condition: CONDITIONS.find(x=>x.id===cond)?.label || cond,
+        image: images[0] || null,
+      });
       setResult(data);
-    // ── runSingle 内の gasPost 部分を以下に差し替え ──
-try {
-  await gasPost({
-    action: "saveAppraisalLog",
-    customerName: customerName.trim(),
-    itemName: data.identified_item || fields.name || "",
-    priceEstimate: fmt(data.recommended_price),
-    minPrice: fmt(data.min_price),
-    maxPrice: fmt(data.max_price),
-    reasoning: data.reasoning || "",
-    customerExplanation: data.customer_explanation || "",
-    staffName: staffName || "",
-    remarks: config?.label || "",
-    appraisalType: "単品",
-    // 画像（1枚目のみ。base64が長すぎるとGASがタイムアウトするため）
-    imageBase64: images[0]?.base64 || "",
-    imageMimeType: images[0]?.mimeType || "",
-  });
-} catch(e) { /* ログ保存失敗は無視 */ }
-    } catch(e) { setError(e.message||"査定失敗"); }
+      // 通知メール送信（画像・査定詳細を含む）
+      try {
+        await gasPost({
+          action: "saveAppraisalLog",
+          customerName: customerName.trim(),
+          itemName: data.identified_item || fields.name || "",
+          priceEstimate: fmt(data.recommended_price),
+          minPrice: fmt(data.min_price),
+          maxPrice: fmt(data.max_price),
+          reasoning: data.reasoning || "",
+          customerExplanation: data.customer_explanation || "",
+          staffName: staffName || "",
+          remarks: config?.label || "",
+          appraisalType: "単品",
+          imageBase64: images[0]?.base64 || "",
+          imageMimeType: images[0]?.mimeType || "",
+        });
+      } catch(e) { /* ログ保存失敗は無視 */ }
+    } catch(e) { setError(e.message || "査定失敗"); }
     setLoading(false);
   };
 
+  // 一括査定実行
   const runBulk = async () => {
     setBulkLoading(true); setBulkError(""); setBulkResults([]);
     try {
       const results = await callBulkAppraisal(bulkItems);
       setBulkResults(results);
-   // ── runBulk 内の gasPost 部分を以下に差し替え ──
-for (const r of results) {
-  try {
-    await gasPost({
-      action: "saveAppraisalLog",
-      customerName: bulkCustomerName.trim(),
-      itemName: r.identified_item || "",
-      priceEstimate: fmt(r.recommended_price),
-      minPrice: fmt(r.min_price),
-      maxPrice: fmt(r.max_price),
-      reasoning: r.reasoning || "",
-      customerExplanation: r.customer_explanation || "",
-      staffName: staffName || "",
-      remarks: "一括査定",
-      appraisalType: "一括",
-      imageBase64: "",
-      imageMimeType: "",
-    });
-  } catch(e) {}
-}    } catch(e) { setBulkError(e.message||"一括査定失敗"); }
+      for (const r of results) {
+        try {
+          await gasPost({
+            action: "saveAppraisalLog",
+            customerName: bulkCustomerName.trim(),
+            itemName: r.identified_item || "",
+            priceEstimate: fmt(r.recommended_price),
+            minPrice: fmt(r.min_price),
+            maxPrice: fmt(r.max_price),
+            reasoning: r.reasoning || "",
+            customerExplanation: r.customer_explanation || "",
+            staffName: staffName || "",
+            remarks: "一括査定",
+            appraisalType: "一括",
+            imageBase64: "",
+            imageMimeType: "",
+          });
+        } catch(e) {}
+      }
+    } catch(e) { setBulkError(e.message || "一括査定失敗"); }
     setBulkLoading(false);
   };
 
@@ -507,41 +543,39 @@ for (const r of results) {
     onSendToLedger({
       customerName,
       items:[{
-        category:config?.label||"",
-        name:result.identified_item||fields.name||"",
-        quantity:"1",
-        feature:fields.condition_detail||"",
-        purchasePrice:String(result.recommended_price||""),
-        aiEstimate:fmt(result.recommended_price),
-        aiMinPrice:result.min_price,
-        aiMaxPrice:result.max_price,
-        aiRecommendedPrice:result.recommended_price,
-        remarks:"",
+        category: config?.label || "",
+        name: result.identified_item || fields.name || "",
+        quantity: "1",
+        feature: fields.condition_detail || "",
+        purchasePrice: String(result.recommended_price || ""),
+        aiEstimate: fmt(result.recommended_price),
+        aiMinPrice: result.min_price,
+        aiMaxPrice: result.max_price,
+        aiRecommendedPrice: result.recommended_price,
+        remarks: "",
       }],
     });
   };
 
   const sendBulkToLedger = () => {
     if (!bulkResults.length) return;
-    const items = bulkItems.map((it,i)=>{
-      const r = bulkResults.find(r=>r.item_index===i+1)||bulkResults[i]||{};
+    const items = bulkItems.map((it,i) => {
+      const r = bulkResults.find(r=>r.item_index===i+1) || bulkResults[i] || {};
       return {category:it.category,name:r.identified_item||it.name,quantity:it.quantity||"1",feature:it.feature||"",purchasePrice:String(r.recommended_price||""),aiEstimate:fmt(r.recommended_price),aiMinPrice:r.min_price,aiMaxPrice:r.max_price,aiRecommendedPrice:r.recommended_price,remarks:""};
     });
-    onSendToLedger({customerName:bulkCustomerName,items});
+    onSendToLedger({ customerName:bulkCustomerName, items });
   };
 
   const updBulk = (idx,k,v) => setBulkItems(p=>p.map((it,i)=>i===idx?{...it,[k]:v}:it));
 
   return (
     <div style={{padding:16}}>
-      {/* モード切替 */}
       <div style={{display:"flex",background:cl.surface,border:"1px solid "+cl.border,borderRadius:8,marginBottom:16,overflow:"hidden"}}>
         {[["single","単品査定"],["bulk","一括査定"]].map(([id,label])=>(
           <button key={id} onClick={()=>setMode(id)} style={{flex:1,padding:"11px 0",background:mode===id?cl.accentBg:"transparent",border:"none",color:mode===id?cl.accent:cl.textD,fontSize:13,fontWeight:mode===id?700:400,cursor:"pointer",fontFamily:font}}>{label}</button>
         ))}
       </div>
 
-      {/* 単品 */}
       {mode==="single" && <>
         <Box title="顧客名"><Input label="顧客名" value={customerName} onChange={setCustomerName} placeholder="例: 山田 太郎"/></Box>
         <Box title="カテゴリを選択">
@@ -570,7 +604,6 @@ for (const r of results) {
         </div>}
       </>}
 
-      {/* 一括 */}
       {mode==="bulk" && <>
         <Box title="顧客名"><Input label="顧客名" value={bulkCustomerName} onChange={setBulkCustomerName} placeholder="例: 山田 太郎"/></Box>
         {bulkItems.map((it,idx)=>(
@@ -580,7 +613,7 @@ for (const r of results) {
             <Input label="数量" value={it.quantity} onChange={v=>updBulk(idx,"quantity",v)} placeholder="例: 1" type="number"/>
             <Input label="特徴・詳細" value={it.feature} onChange={v=>updBulk(idx,"feature",v)} placeholder="色、サイズ、付属品など" multiline/>
             <Sel label="状態ランク" value={it.condition} onChange={v=>updBulk(idx,"condition",v)} options={CONDITIONS.map(x=>({value:x.label,label:x.label+" — "+x.desc}))}/>
-            {bulkItems.length>1&&<div style={{marginTop:8}}><Btn onClick={()=>setBulkItems(p=>p.filter((_,i)=>i!==idx))} variant="danger" small>この商品を削除</Btn></div>}
+            {bulkItems.length>1 && <div style={{marginTop:8}}><Btn onClick={()=>setBulkItems(p=>p.filter((_,i)=>i!==idx))} variant="danger" small>この商品を削除</Btn></div>}
           </Box>
         ))}
         <div style={{marginBottom:14}}><Btn onClick={()=>setBulkItems(p=>[...p,{...emptyBulkItem}])} variant="secondary">+ 商品を追加</Btn></div>
@@ -626,11 +659,10 @@ function LegalTab({ staffName, pendingLedger, onPendingConsumed }) {
     }
     setShowBanner(true);
     onPendingConsumed();
-  },[pendingLedger]);
+  }, [pendingLedger]);
 
   const visReq = ["sellerName","sellerPhone","sellerAddress","sellerIdType","sellerIdNumber","staffName"];
   const formOk = visReq.every(f=>visit[f]?.trim()) && items.every(it=>it.name?.trim()&&it.purchasePrice?.trim());
-
   const resetForm = () => { setVisit(makeEmptyVisit()); setItems([{...emptyItem}]); setShowBanner(false); };
 
   const save = async () => {
@@ -673,7 +705,6 @@ function LegalTab({ staffName, pendingLedger, onPendingConsumed }) {
         <p style={{fontSize:12,fontWeight:700,color:cl.accent,margin:"0 0 6px",fontFamily:font}}>古物営業法に基づく記録義務</p>
         <p style={{fontSize:11,color:cl.textM,margin:0,lineHeight:1.7,fontFamily:font}}>第16条・第17条により記録・3年間保存義務があります。</p>
       </div>
-
       <Box title="取引情報">
         <Input label="取引日" value={visit.date} onChange={v=>uv("date",v)} type="date" required/>
         <Input label="担当者" value={visit.staffName} onChange={v=>uv("staffName",v)} required placeholder="担当者名"/>
@@ -691,15 +722,12 @@ function LegalTab({ staffName, pendingLedger, onPendingConsumed }) {
         <Sel label="本人確認方法" value={visit.idVerifyMethod} onChange={v=>uv("idVerifyMethod",v)} options={ID_VERIFY_METHODS}/>
         <Input label="確認者" value={visit.idVerifiedBy} onChange={v=>uv("idVerifiedBy",v)} required placeholder="確認者名"/>
       </Box>
-
       {items.map((it,idx)=>(
         <LedgerItemCard key={idx} it={it} idx={idx} itemCount={items.length}
           onUpdate={ui} onDelete={i=>setItems(p=>p.filter((_,j)=>j!==i))}/>
       ))}
-
       <div style={{marginBottom:14}}><Btn onClick={()=>setItems(p=>[...p,{...emptyItem}])} variant="secondary">+ 商品を追加</Btn></div>
       <Btn onClick={save} disabled={saving||!formOk} loading={saving}>保存</Btn>
-
       {saved && <div style={{marginTop:10,padding:12,background:"#F0F7F2",border:"1px solid "+cl.staffBorder,borderRadius:8}}><p style={{margin:0,fontSize:13,fontWeight:600,color:cl.success,fontFamily:font}}>{saved}</p></div>}
       {error && <div style={{marginTop:10,padding:12,background:"#FDF2F0",border:"1px solid #E8C4BF",borderRadius:8}}><p style={{margin:0,fontSize:12,color:cl.danger,fontFamily:font}}>{error}</p></div>}
       {!formOk&&!saved&&<p style={{fontSize:11,color:cl.danger,textAlign:"center",marginTop:8,fontFamily:font}}>必須項目（*）と各商品の商品名・金額を入力してください</p>}
