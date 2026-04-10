@@ -451,7 +451,25 @@ function AppraisalTab({ staffName, onSendToLedger }) {
     try {
       const data = await callAppraisal({category:config?.label||"",fields,condition:CONDITIONS.find(x=>x.id===cond)?.label||cond,image:images[0]||null});
       setResult(data);
-      try { await gasPost({action:"saveAppraisalLog",customerName:customerName.trim(),itemName:data.identified_item||fields.name||"",priceEstimate:fmt(data.recommended_price),staffName:staffName||"",remarks:config?.label||"",appraisalType:"単品"}); } catch(e){}
+    // ── runSingle 内の gasPost 部分を以下に差し替え ──
+try {
+  await gasPost({
+    action: "saveAppraisalLog",
+    customerName: customerName.trim(),
+    itemName: data.identified_item || fields.name || "",
+    priceEstimate: fmt(data.recommended_price),
+    minPrice: fmt(data.min_price),
+    maxPrice: fmt(data.max_price),
+    reasoning: data.reasoning || "",
+    customerExplanation: data.customer_explanation || "",
+    staffName: staffName || "",
+    remarks: config?.label || "",
+    appraisalType: "単品",
+    // 画像（1枚目のみ。base64が長すぎるとGASがタイムアウトするため）
+    imageBase64: images[0]?.base64 || "",
+    imageMimeType: images[0]?.mimeType || "",
+  });
+} catch(e) { /* ログ保存失敗は無視 */ }
     } catch(e) { setError(e.message||"査定失敗"); }
     setLoading(false);
   };
