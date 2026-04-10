@@ -1,17 +1,22 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 const GAS_URL = process.env.NEXT_PUBLIC_GAS_URL || "";
 
 async function gasPost(body) {
   if (!GAS_URL) throw new Error("GAS URLが未設定です（NEXT_PUBLIC_GAS_URL）");
-  const res = await fetch(GAS_URL, { method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify(body) });
+  const res = await fetch(GAS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error("通信エラー: " + res.status);
   const data = await res.json();
   if (!data.success) throw new Error(data.error || "処理に失敗しました");
   return data;
 }
 
+// ─── カテゴリ設定 ────────────────────────────────────────────────────
 const CATEGORY_CONFIG = {
   brand_bag: {
     label: "ブランドバッグ", examples: "ルイヴィトン, シャネル, エルメス", needsAuth: true,
@@ -156,31 +161,38 @@ const CONDITIONS = [
   { id: "C", label: "C やや難", desc: "傷・汚れあり" },
   { id: "D", label: "D 難あり", desc: "大きな傷・破損" },
 ];
-const ID_TYPES = ["運転免許証","マイナンバーカード","パスポート","住民基本台帳カード","健康保険証","在留カード","特別永住者証明書"];
 
-const cl = {bg:"#F4F2ED",surface:"#FFFFFF",surfAlt:"#F9F8F5",border:"#E3DED5",bFocus:"#8B7355",accent:"#5C4D33",accentL:"#8B7355",accentBg:"#EDE8DD",text:"#2A2215",textM:"#5C5040",textD:"#9B9080",danger:"#B14A3F",success:"#3E7A56",white:"#FFFFFF",staffBg:"#F0F7F2",staffAccent:"#3E7A56",staffBorder:"#C2DCC9",authBg:"#FFF8F0",authAccent:"#C67030",authBorder:"#E8CBA8"};
-const font="'Noto Sans JP',sans-serif";
-const fmt=n=>(!n&&n!==0)?"---":"¥"+Number(n).toLocaleString();
+const ID_TYPES = [
+  "運転免許証","マイナンバーカード","パスポート",
+  "住民基本台帳カード","健康保険証","在留カード","特別永住者証明書",
+];
 
-// ─── AI Appraisal ───────────────────────────────────────────────────
-async function callAppraisal({category,fields,condition,image}){
+const ID_VERIFY_METHODS = ["対面確認","コピー取得","番号記録"];
+
+// ─── カラーパレット ──────────────────────────────────────────────────
+const cl = {
+  bg:"#F4F2ED", surface:"#FFFFFF", surfAlt:"#F9F8F5", border:"#E3DED5",
+  bFocus:"#8B7355", accent:"#5C4D33", accentL:"#8B7355", accentBg:"#EDE8DD",
+  text:"#2A2215", textM:"#5C5040", textD:"#9B9080",
+  danger:"#B14A3F", success:"#3E7A56", white:"#FFFFFF",
+  staffBg:"#F0F7F2", staffAccent:"#3E7A56", staffBorder:"#C2DCC9",
+  authBg:"#FFF8F0", authAccent:"#C67030", authBorder:"#E8CBA8",
+};
+const font = "'Noto Sans JP',sans-serif";
+const fmt = n => (!n && n !== 0) ? "---" : "¥" + Number(n).toLocaleString();
+
+// ─── AI 査定（単品） ──────────────────────────────────────────────────
+async function callAppraisal({ category, fields, condition, image }) {
   const content = [];
   const supportedImageTypes = ["image/jpeg","image/png","image/gif","image/webp"];
 
   if (image && image.base64 && image.mimeType && supportedImageTypes.includes(image.mimeType)) {
-    content.push({
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: image.mimeType,
-        data: image.base64
-      }
-    });
+    content.push({ type:"image", source:{ type:"base64", media_type:image.mimeType, data:image.base64 } });
   }
 
   const ft = Object.entries(fields)
-    .filter(([,v]) => v)
-    .map(([k,v]) => "- " + k + ": " + v)
+    .filter(([, v]) => v)
+    .map(([k, v]) => "- " + k + ": " + v)
     .join("\n");
 
   let p = "あなたはプロの買取査定士です。ウェブ検索で最新の中古相場を必ず調べてから査定してください。\n";
@@ -189,267 +201,867 @@ async function callAppraisal({category,fields,condition,image}){
   }
   p += "カテゴリ: " + (category || "不明") + "\n状態: " + (condition || "不明") + "\n\n商品詳細:\n" + (ft || "画像から判断");
   p += '\n\nJSONのみ回答:\n{"identified_item":"商品名","min_price":0,"max_price":0,"recommended_price":0,"market_price":0,"reasoning":"根拠","min_price_reason":"下限理由","max_price_reason":"上限理由","price_factors":["要因"],"market_trend":"上昇/安定/下降","trend_reason":"理由","confidence":"高/中/低","customer_explanation":"お客様向け説明3-4文"}';
+  content.push({ type:"text", text:p });
 
-  content.push({ type: "text", text: p });
-
-  const apiUrl =
-    typeof window !== "undefined"
-      ? window.location.origin + "/api/appraise"
-      : "/api/appraise";
-
-  const res = await fetch(apiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content })
-  });
-
+  const apiUrl = typeof window !== "undefined" ? window.location.origin + "/api/appraise" : "/api/appraise";
+  const res = await fetch(apiUrl, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ content }) });
   const data = await res.json();
-
-  if (!res.ok) {
-    throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error || data));
-  }
-
+  if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error || data));
   if (data.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
   if (!data.content) throw new Error("応答が空です");
 
-  const txt = (data.content || [])
-    .filter(b => b.type === "text")
-    .map(b => b.text)
-    .join("");
-
+  const txt = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
   if (!txt) throw new Error("テキストが空です");
-
   const m = txt.replace(/```json|```/g, "").trim().match(/\{[\s\S]*\}/);
   if (!m) throw new Error("解析失敗");
-
   return JSON.parse(m[0]);
 }
 
-// ─── UI Components ──────────────────────────────────────────────────
-function Input({label,value,onChange,placeholder,required,multiline,type="text"}){
-  const s={width:"100%",boxSizing:"border-box",padding:"11px 14px",background:cl.surfAlt,border:"1px solid "+cl.border,borderRadius:6,color:cl.text,fontSize:14,fontFamily:font,outline:"none"};
-  return(<div style={{marginBottom:14}}><label style={{display:"block",fontSize:12,fontWeight:600,color:cl.textM,marginBottom:5,fontFamily:font}}>{label}{required&&<span style={{color:cl.danger,marginLeft:3}}>*</span>}</label>{multiline?<textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={3} style={{...s,resize:"vertical"}} onFocus={e=>e.target.style.borderColor=cl.bFocus} onBlur={e=>e.target.style.borderColor=cl.border}/>:<input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={s} onFocus={e=>e.target.style.borderColor=cl.bFocus} onBlur={e=>e.target.style.borderColor=cl.border}/>}</div>);
-}
-function Sel({label,value,onChange,options,required}){
-  return(<div style={{marginBottom:14}}><label style={{display:"block",fontSize:12,fontWeight:600,color:cl.textM,marginBottom:5,fontFamily:font}}>{label}{required&&<span style={{color:cl.danger,marginLeft:3}}>*</span>}</label><select value={value} onChange={e=>onChange(e.target.value)} style={{width:"100%",padding:"11px 14px",background:cl.surfAlt,border:"1px solid "+cl.border,borderRadius:6,color:cl.text,fontSize:14,fontFamily:font,outline:"none",boxSizing:"border-box"}}><option value="">選択してください</option>{options.map(o=><option key={o.value||o} value={o.value||o}>{o.label||o}</option>)}</select></div>);
-}
-function Btn({onClick,children,disabled,loading,variant="primary"}){
-  const st={primary:{bg:cl.accent,co:cl.white,bd:"none"},secondary:{bg:cl.surface,co:cl.text,bd:"1px solid "+cl.border}}[variant]||{bg:cl.accent,co:cl.white,bd:"none"};
-  return(<button onClick={onClick} disabled={disabled||loading} style={{width:"100%",padding:"14px",border:st.bd,borderRadius:8,fontSize:14,fontWeight:700,cursor:disabled?"not-allowed":"pointer",fontFamily:font,background:disabled?"#E0DDD6":st.bg,color:disabled?cl.textD:st.co}}>{loading?<span style={{display:"inline-flex",alignItems:"center",gap:8}}><span style={{display:"inline-block",width:14,height:14,border:"2px solid currentColor",borderTopColor:"transparent",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>処理中...</span>:children}</button>);
-}
-function Box({title,sub,children,type}){
-  const bg={staff:cl.staffBg,auth:cl.authBg}[type]||cl.surface;
-  const bd={staff:cl.staffBorder,auth:cl.authBorder}[type]||cl.border;
-  const co={staff:cl.staffAccent,auth:cl.authAccent}[type]||cl.accent;
-  return(<div style={{background:bg,borderRadius:10,border:"1px solid "+bd,padding:18,marginBottom:14}}>{title&&<p style={{margin:"0 0 4px",fontSize:13,fontWeight:700,color:co,fontFamily:font}}>{title}</p>}{sub&&<p style={{margin:"0 0 14px",fontSize:11,color:cl.textD,fontFamily:font}}>{sub}</p>}{children}</div>);
-}
-function ImageUploader({images,setImages,photoGuide}){
-  const ref=useRef();
-  const add=files=>{Array.from(files).forEach(f=>{if(!f.type.startsWith("image/"))return;const r=new FileReader();r.onload=()=>setImages(p=>[...p,{preview:r.result,base64:r.result.split(",")[1]}]);r.readAsDataURL(f)})};
-  return(<div style={{marginBottom:14}}><div onClick={()=>ref.current?.click()} style={{border:"2px dashed "+cl.border,borderRadius:8,padding:"18px 16px",textAlign:"center",cursor:"pointer",background:cl.surfAlt}}><div style={{width:32,height:32,margin:"0 auto 4px",borderRadius:"50%",border:"2px solid "+cl.textD,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:cl.textD}}>+</div><p style={{margin:0,fontSize:12,color:cl.textM,fontFamily:font}}>写真を追加</p><input ref={ref} type="file" accept="image/*" multiple capture="environment" style={{display:"none"}} onChange={e=>add(e.target.files)}/></div>{images.length>0&&<div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>{images.map((img,i)=>(<div key={i} style={{position:"relative",width:64,height:64,borderRadius:6,overflow:"hidden",border:"1px solid "+cl.border}}><img src={img.preview} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/><button onClick={()=>setImages(p=>p.filter((_,j)=>j!==i))} style={{position:"absolute",top:1,right:1,width:18,height:18,borderRadius:"50%",background:"rgba(0,0,0,.5)",color:"#fff",border:"none",fontSize:10,cursor:"pointer",lineHeight:"16px",padding:0}}>x</button></div>))}</div>}{photoGuide&&<div style={{marginTop:10,padding:"10px 12px",background:"#F8F6F1",borderRadius:6,border:"1px solid "+cl.border}}><p style={{margin:"0 0 6px",fontSize:11,fontWeight:600,color:cl.accent,fontFamily:font}}>撮影ガイド</p><p style={{margin:0,fontSize:11,color:cl.textM,fontFamily:font,lineHeight:1.8}}>{photoGuide.join(" / ")}</p></div>}</div>);
-}
-function AuthGuide({authGuide}){if(!authGuide)return null;return(<Box title="真贋確認ガイド" type="auth"><p style={{margin:"0 0 12px",fontSize:13,color:cl.text,lineHeight:1.9,fontFamily:font}}>{authGuide.summary}</p><div style={{borderTop:"1px solid "+cl.authBorder,paddingTop:12}}>{authGuide.checks.map((c,i)=>{const [t,...r]=c.split(" — ");return(<div key={i} style={{padding:"10px 12px",background:cl.white,borderRadius:6,marginBottom:6,border:"1px solid "+cl.authBorder}}><p style={{margin:0,fontSize:12,fontWeight:700,color:cl.text,fontFamily:font}}>{t}</p>{r.length>0&&<p style={{margin:"4px 0 0",fontSize:12,color:cl.textM,lineHeight:1.7,fontFamily:font}}>{r.join(" — ")}</p>}</div>)})}</div></Box>)}
+// ─── AI 査定（一括） ──────────────────────────────────────────────────
+async function callBulkAppraisal(itemList) {
+  const descriptions = itemList.map((it, i) => {
+    const parts = [
+      `【商品${i + 1}】`,
+      `品目: ${it.category || "不明"}`,
+      `商品名: ${it.name || "不明"}`,
+      `数量: ${it.quantity || 1}点`,
+      `特徴: ${it.feature || "なし"}`,
+      `状態: ${it.condition || "不明"}`,
+    ];
+    return parts.join("\n");
+  }).join("\n\n");
 
-// ─── Price Result ───────────────────────────────────────────────────
-function PriceResult({result}){
-  const trend=t=>t==="上昇"?"↑ 上昇":t==="下降"?"↓ 下降":"→ 安定";
-  return(<>
-    {result.identified_item&&<div style={{marginBottom:14,padding:12,background:cl.accentBg,borderRadius:8}}><p style={{margin:0,fontSize:11,color:cl.textM,fontFamily:font}}>識別商品</p><p style={{margin:"4px 0 0",fontSize:14,fontWeight:600,color:cl.text,fontFamily:font}}>{result.identified_item}</p></div>}
-    <div style={{background:cl.surface,borderRadius:10,border:"1px solid "+cl.accentL,padding:20,marginBottom:14}}>
-      <div style={{textAlign:"center",marginBottom:16}}><p style={{fontSize:11,color:cl.textD,margin:"0 0 2px",fontFamily:font}}>推奨買取価格</p><p style={{fontSize:30,fontWeight:800,color:cl.accent,margin:0,fontFamily:font}}>{fmt(result.recommended_price)}</p></div>
-      <div style={{marginBottom:16}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:11,color:cl.textD,fontFamily:font}}>下限</span><span style={{fontSize:11,color:cl.textD,fontFamily:font}}>上限</span></div><div style={{position:"relative",height:8,background:"#E8E4DC",borderRadius:4}}><div style={{position:"absolute",left:0,top:0,height:"100%",width:"100%",background:"linear-gradient(90deg,"+cl.danger+"40,"+cl.success+"40)",borderRadius:4}}/>{result.max_price>result.min_price&&(()=>{const p=((result.recommended_price-result.min_price)/(result.max_price-result.min_price))*100;return<div style={{position:"absolute",top:-3,left:Math.min(Math.max(p,5),95)+"%",transform:"translateX(-50%)",width:14,height:14,background:cl.accent,borderRadius:"50%",border:"2px solid "+cl.white,boxShadow:"0 1px 3px rgba(0,0,0,.2)"}}/>})()}</div><div style={{display:"flex",justifyContent:"space-between",marginTop:4}}><span style={{fontSize:13,fontWeight:700,color:cl.text,fontFamily:font}}>{fmt(result.min_price)}</span><span style={{fontSize:13,fontWeight:700,color:cl.text,fontFamily:font}}>{fmt(result.max_price)}</span></div></div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}><div style={{padding:"8px 10px",background:"#FDF5F4",borderRadius:6,borderLeft:"3px solid "+cl.danger}}><p style={{margin:0,fontSize:10,fontWeight:600,color:cl.danger,fontFamily:font}}>下限の理由</p><p style={{margin:"3px 0 0",fontSize:11,color:cl.text,lineHeight:1.5,fontFamily:font}}>{result.min_price_reason||"—"}</p></div><div style={{padding:"8px 10px",background:"#F2F8F4",borderRadius:6,borderLeft:"3px solid "+cl.success}}><p style={{margin:0,fontSize:10,fontWeight:600,color:cl.success,fontFamily:font}}>上限の理由</p><p style={{margin:"3px 0 0",fontSize:11,color:cl.text,lineHeight:1.5,fontFamily:font}}>{result.max_price_reason||"—"}</p></div></div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{[["相場",fmt(result.market_price),cl.text],["動向",trend(result.market_trend),cl.text],["信頼度",result.confidence,result.confidence==="高"?cl.success:result.confidence==="低"?cl.danger:cl.accent]].map(([l,v,co])=>(<div key={l} style={{padding:"6px 8px",background:cl.surfAlt,borderRadius:6}}><p style={{fontSize:10,color:cl.textD,margin:0,fontFamily:font}}>{l}</p><p style={{fontSize:12,fontWeight:600,color:co,margin:"2px 0 0",fontFamily:font}}>{v}</p></div>))}</div>
+  const p = `あなたはプロの買取査定士です。ウェブ検索で最新の中古相場を必ず調べてから査定してください。
+以下の複数商品をまとめて査定してください。
+
+${descriptions}
+
+各商品についてJSONの配列で回答してください。
+JSONのみ回答（配列形式）:
+[{"item_index":1,"identified_item":"商品名","recommended_price":0,"min_price":0,"max_price":0,"market_price":0,"confidence":"高/中/低","reasoning":"根拠","customer_explanation":"説明2文"}]`;
+
+  const content = [{ type:"text", text:p }];
+  const apiUrl = typeof window !== "undefined" ? window.location.origin + "/api/appraise" : "/api/appraise";
+  const res = await fetch(apiUrl, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ content }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error || data));
+  if (data.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
+  if (!data.content) throw new Error("応答が空です");
+
+  const txt = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  if (!txt) throw new Error("テキストが空です");
+  const m = txt.replace(/```json|```/g, "").trim().match(/\[[\s\S]*\]/);
+  if (!m) throw new Error("一括査定の解析に失敗しました");
+  return JSON.parse(m[0]);
+}
+
+// ─── UI 基本コンポーネント ────────────────────────────────────────────
+function Input({ label, value, onChange, placeholder, required, multiline, type="text" }) {
+  const s = {
+    width:"100%", boxSizing:"border-box", padding:"11px 14px",
+    background:cl.surfAlt, border:"1px solid "+cl.border, borderRadius:6,
+    color:cl.text, fontSize:14, fontFamily:font, outline:"none",
+  };
+  return (
+    <div style={{ marginBottom:14 }}>
+      <label style={{ display:"block", fontSize:12, fontWeight:600, color:cl.textM, marginBottom:5, fontFamily:font }}>
+        {label}{required && <span style={{ color:cl.danger, marginLeft:3 }}>*</span>}
+      </label>
+      {multiline
+        ? <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={3}
+            style={{ ...s, resize:"vertical" }}
+            onFocus={e => e.target.style.borderColor = cl.bFocus}
+            onBlur={e => e.target.style.borderColor = cl.border} />
+        : <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+            style={s}
+            onFocus={e => e.target.style.borderColor = cl.bFocus}
+            onBlur={e => e.target.style.borderColor = cl.border} />
+      }
     </div>
-    <Box title="査定根拠"><p style={{fontSize:12,color:cl.text,margin:0,lineHeight:1.8,fontFamily:font}}>{result.reasoning}</p>{result.price_factors?.map((f,i)=><div key={i} style={{padding:"6px 10px",background:cl.surfAlt,borderRadius:4,marginTop:6,fontSize:11,color:cl.textM,fontFamily:font,borderLeft:"3px solid "+cl.accentL}}>{f}</div>)}</Box>
-    {result.customer_explanation&&<Box title="お客様への説明文" type="staff"><p style={{margin:0,fontSize:13,color:cl.text,lineHeight:2,fontFamily:font}}>{result.customer_explanation}</p></Box>}
-  </>);
+  );
 }
 
-// ─── Appraisal Tab ──────────────────────────────────────────────────
-function AppraisalTab({staffName}){
- const [customerName,setCustomerName]=useState(""); const [catId,setCatId]=useState("");const [fields,setFields]=useState({});const [cond,setCond]=useState("");const [images,setImages]=useState([]);const [loading,setLoading]=useState(false);const [result,setResult]=useState(null);const [error,setError]=useState("");
-  const config=CATEGORY_CONFIG[catId];const hasImg=images.length>0;const hasReq=config?config.fields.filter(f=>f.required).every(f=>fields[f.key]?.trim()):false;const ok=catId&&(hasImg||hasReq);
+function Sel({ label, value, onChange, options, required }) {
+  return (
+    <div style={{ marginBottom:14 }}>
+      <label style={{ display:"block", fontSize:12, fontWeight:600, color:cl.textM, marginBottom:5, fontFamily:font }}>
+        {label}{required && <span style={{ color:cl.danger, marginLeft:3 }}>*</span>}
+      </label>
+      <select value={value} onChange={e => onChange(e.target.value)}
+        style={{ width:"100%", padding:"11px 14px", background:cl.surfAlt, border:"1px solid "+cl.border,
+          borderRadius:6, color:cl.text, fontSize:14, fontFamily:font, outline:"none", boxSizing:"border-box" }}>
+        <option value="">選択してください</option>
+        {options.map(o => <option key={o.value || o} value={o.value || o}>{o.label || o}</option>)}
+      </select>
+    </div>
+  );
+}
 
-  const run=async()=>{
-    setLoading(true);setError("");setResult(null);
-    try{
-      const data=await callAppraisal({category:config?.label||"",fields,condition:CONDITIONS.find(x=>x.id===cond)?.label||cond,image:images[0]||null});
-      setResult(data);
-      // 査定ログをGASに保存
-      try{await gasPost({action:"saveAppraisalLog",customerName:customerName.trim(),itemName:data.identified_item||fields.name||"",priceEstimate:fmt(data.recommended_price),staffName:staffName||"",remarks:config?.label||""})}catch(e){}
-    }catch(e){setError(e.message||"査定失敗")}
-    setLoading(false);
+function Btn({ onClick, children, disabled, loading, variant="primary", small }) {
+  const st = {
+    primary: { bg:cl.accent, co:cl.white, bd:"none" },
+    secondary: { bg:cl.surface, co:cl.text, bd:"1px solid "+cl.border },
+    danger: { bg:"#FDF2F0", co:cl.danger, bd:"1px solid #E8C4BF" },
+  }[variant] || { bg:cl.accent, co:cl.white, bd:"none" };
+  return (
+    <button onClick={onClick} disabled={disabled || loading}
+      style={{ width:"100%", padding:small?"8px 12px":"14px", border:st.bd, borderRadius:8,
+        fontSize:small?12:14, fontWeight:700, cursor:disabled?"not-allowed":"pointer",
+        fontFamily:font, background:disabled?"#E0DDD6":st.bg, color:disabled?cl.textD:st.co }}>
+      {loading
+        ? <span style={{ display:"inline-flex", alignItems:"center", gap:8 }}>
+            <span style={{ display:"inline-block", width:14, height:14, border:"2px solid currentColor",
+              borderTopColor:"transparent", borderRadius:"50%", animation:"spin .7s linear infinite" }} />
+            処理中...
+          </span>
+        : children}
+    </button>
+  );
+}
+
+function Box({ title, sub, children, type }) {
+  const bg = { staff:cl.staffBg, auth:cl.authBg }[type] || cl.surface;
+  const bd = { staff:cl.staffBorder, auth:cl.authBorder }[type] || cl.border;
+  const co = { staff:cl.staffAccent, auth:cl.authAccent }[type] || cl.accent;
+  return (
+    <div style={{ background:bg, borderRadius:10, border:"1px solid "+bd, padding:18, marginBottom:14 }}>
+      {title && <p style={{ margin:"0 0 4px", fontSize:13, fontWeight:700, color:co, fontFamily:font }}>{title}</p>}
+      {sub && <p style={{ margin:"0 0 14px", fontSize:11, color:cl.textD, fontFamily:font }}>{sub}</p>}
+      {children}
+    </div>
+  );
+}
+
+function ImageUploader({ images, setImages, photoGuide }) {
+  const ref = useRef();
+  const add = files => {
+    Array.from(files).forEach(f => {
+      if (!f.type.startsWith("image/")) return;
+      const r = new FileReader();
+      r.onload = () => setImages(p => [...p, { preview:r.result, base64:r.result.split(",")[1], mimeType:f.type }]);
+      r.readAsDataURL(f);
+    });
   };
-
-  return(<div style={{padding:16}}>
-  <Box title="査定情報">
-  <Input
-    label="顧客名"
-    value={customerName}
-    onChange={setCustomerName}
-    placeholder="例: 山田 太郎"
-  />
-</Box>
-    <Box title="カテゴリを選択"><div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>{Object.entries(CATEGORY_CONFIG).map(([id,cfg])=>(<button key={id} onClick={()=>{setCatId(id);setFields({});setResult(null);setError("")}} style={{padding:"9px 10px",textAlign:"left",cursor:"pointer",background:catId===id?cl.accentBg:cl.surfAlt,border:"1px solid "+(catId===id?cl.accentL:cl.border),borderRadius:6}}><span style={{fontSize:12,fontWeight:600,color:catId===id?cl.accent:cl.text,display:"block",fontFamily:font}}>{cfg.label}</span><span style={{fontSize:10,color:cl.textD,fontFamily:font}}>{cfg.examples}</span></button>))}</div></Box>
-    {catId&&config&&<>
-      {config.authGuide&&<AuthGuide authGuide={config.authGuide}/>}
-      <Box title="商品写真"><ImageUploader images={images} setImages={setImages} photoGuide={config.photoGuide}/></Box>
-      <Box title={config.label+"の詳細"} sub="わかる範囲で">{config.fields.map(f=>(<Input key={f.key} label={f.label} value={fields[f.key]||""} onChange={v=>setFields(p=>({...p,[f.key]:v}))} placeholder={f.placeholder} required={f.required} multiline={f.multiline}/>))}<Sel label="状態ランク" value={cond} onChange={setCond} options={CONDITIONS.map(x=>({value:x.id,label:x.label+" — "+x.desc}))}/></Box>
-      <Btn onClick={run} disabled={!ok} loading={loading}>AI査定を実行</Btn>
-    </>}
-    {error&&<div style={{marginTop:14,padding:14,background:"#FDF2F0",border:"1px solid #E8C4BF",borderRadius:8}}><p style={{color:cl.danger,margin:0,fontSize:12,fontFamily:font,wordBreak:"break-word"}}>{error}</p></div>}
-    {result&&<div style={{marginTop:20}}><PriceResult result={result}/></div>}
-  </div>);
-}
-
-// ─── Ledger Tab (GAS save) ──────────────────────────────────────────
-function LegalTab({staffName}){
-  const now=new Date();const ds=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
-  const emptyItem={itemName:"",purchasePrice:"",remarks:""};
-  const [visit,setVisit]=useState({date:ds,staffName:staffName||"",sellerName:"",sellerPhone:"",sellerAddress:"",sellerIdType:"",sellerIdNumber:"",idVerifiedBy:staffName||""});
-  const [items,setItems]=useState([{...emptyItem}]);
-  const [saving,setSaving]=useState(false);const [saved,setSaved]=useState("");const [error,setError]=useState("");
-  const uv=(k,v)=>setVisit(p=>({...p,[k]:v}));
-  const ui=(idx,k,v)=>setItems(p=>p.map((it,i)=>i===idx?{...it,[k]:v}:it));
-
-  const visReq=["sellerName","sellerPhone","sellerAddress","sellerIdType","sellerIdNumber","staffName"];
-  const ok=visReq.every(f=>visit[f]?.trim())&&items.every(it=>it.itemName?.trim()&&it.purchasePrice?.trim());
-const resetForm=()=>{
-  setVisit({
-    date:ds,
-    staffName:staffName||"",
-    sellerName:"",
-    sellerPhone:"",
-    sellerAddress:"",
-    sellerIdType:"",
-    sellerIdNumber:"",
-    idVerifiedBy:staffName||""
-  });
-  setItems([{...emptyItem}]);
-};
-  const save=async()=>{
-    setSaving(true);setError("");setSaved("");
-    try{
-      const data=await gasPost({action:"saveLedger",transactionDate: visit.date,sellerName:visit.sellerName,sellerPhone:visit.sellerPhone,sellerAddress:visit.sellerAddress,staffName:visit.staffName,items:items.map(it=>({itemName:it.itemName,purchasePrice:it.purchasePrice,remarks:"身分証:"+visit.sellerIdType+" "+visit.sellerIdNumber+" / 確認者:"+visit.idVerifiedBy+(it.remarks?" / "+it.remarks:"")}))});
-      setSaved("保存完了（案件ID: "+data.caseId+"）");
-      resetForm();
-    }catch(e){setError(e.message||"保存に失敗しました")}
-    setSaving(false);
-  };
-
-  return(<div style={{padding:16}}>
-    <div style={{background:cl.accentBg,borderRadius:8,padding:14,marginBottom:16,border:"1px solid "+cl.accentL}}><p style={{fontSize:12,fontWeight:700,color:cl.accent,margin:"0 0 6px",fontFamily:font}}>古物営業法に基づく記録義務</p><p style={{fontSize:11,color:cl.textM,margin:0,lineHeight:1.7,fontFamily:font}}>第16条・第17条により記録・3年間保存義務があります。</p></div>
-    <Box title="訪問情報"><Input label="取引日" value={visit.date} onChange={v=>uv("date",v)} type="date" required/><Input label="担当者" value={visit.staffName} onChange={v=>uv("staffName",v)} required placeholder="担当者名"/></Box>
-    <Box title="売主情報"><Input label="氏名" value={visit.sellerName} onChange={v=>uv("sellerName",v)} required placeholder="山田 太郎"/><Input label="住所" value={visit.sellerAddress} onChange={v=>uv("sellerAddress",v)} required placeholder="東京都○○区○○"/><Input label="電話番号" value={visit.sellerPhone} onChange={v=>uv("sellerPhone",v)} required placeholder="090-XXXX-XXXX"/></Box>
-    <Box title="本人確認"><Sel label="身分証の種類" value={visit.sellerIdType} onChange={v=>uv("sellerIdType",v)} options={ID_TYPES} required/><Input label="身分証番号" value={visit.sellerIdNumber} onChange={v=>uv("sellerIdNumber",v)} required placeholder="番号"/><Input label="確認者" value={visit.idVerifiedBy} onChange={v=>uv("idVerifiedBy",v)} required placeholder="確認者名"/></Box>
-
-    {items.map((it,idx)=>(<Box key={idx} title={"商品 "+(idx+1)}>
-      <Input label="商品名" value={it.itemName} onChange={v=>ui(idx,"itemName",v)} required placeholder="ロレックス デイトナ"/>
-      <Input label="買取金額（円）" value={it.purchasePrice} onChange={v=>ui(idx,"purchasePrice",v)} type="number" required/>
-      <Input label="備考" value={it.remarks} onChange={v=>ui(idx,"remarks",v)} placeholder="品目、状態、付属品など"/>
-      {items.length>1&&<button onClick={()=>setItems(p=>p.filter((_,i)=>i!==idx))} style={{background:"none",border:"1px solid "+cl.danger,borderRadius:6,padding:"6px 12px",fontSize:11,color:cl.danger,cursor:"pointer",fontFamily:font,width:"100%"}}>この商品を削除</button>}
-    </Box>))}
-    <div style={{marginBottom:14}}><Btn onClick={()=>setItems(p=>[...p,{...emptyItem}])} variant="secondary">+ 商品を追加</Btn></div>
-
-    <Btn onClick={save} disabled={saving || (!ok && !saved)} loading={saving}>
-  {saved ? "保存完了" : "保存"}
-</Btn>
-    {saved&&<div style={{marginTop:10,padding:12,background:"#F0F7F2",border:"1px solid "+cl.staffBorder,borderRadius:8}}><p style={{margin:0,fontSize:13,fontWeight:600,color:cl.success,fontFamily:font}}>{saved}</p></div>}
-    {error&&<div style={{marginTop:10,padding:12,background:"#FDF2F0",border:"1px solid #E8C4BF",borderRadius:8}}><p style={{margin:0,fontSize:12,color:cl.danger,fontFamily:font}}>{error}</p></div>}
-    {!ok&&<p style={{fontSize:11,color:cl.danger,textAlign:"center",marginTop:8,fontFamily:font}}>必須項目（*）と各商品の商品名・金額を入力してください</p>}
-  </div>);
-}
-
-// ─── Login ──────────────────────────────────────────────────────────
-function LoginScreen({onLogin}){
-  const [staffId,setStaffId]=useState("");const [password,setPassword]=useState("");const [loading,setLoading]=useState(false);const [err,setErr]=useState("");
-  const go=async()=>{
-    if(!staffId.trim()||!password.trim()){setErr("IDとパスワードを入力してください");return}
-    if(!/^\d{4}$/.test(password)){setErr("パスワードは4桁の数字です");return}
-    setLoading(true);setErr("");
-    try{const data=await gasPost({action:"login",staffId:staffId.trim(),password:password.trim()});onLogin({staffId:data.staffId,staffName:data.staffName})}catch(e){setErr(e.message||"ログイン失敗")}
-    setLoading(false);
-  };
-  return(<div style={{maxWidth:400,margin:"0 auto",minHeight:"100vh",background:cl.bg,fontFamily:font,display:"flex",flexDirection:"column",justifyContent:"center",padding:24}}>
-    <div style={{textAlign:"center",marginBottom:36}}><h1 style={{fontSize:20,fontWeight:800,color:cl.accent,margin:"0 0 4px",letterSpacing:2}}>出張買取</h1><p style={{fontSize:12,color:cl.textD,margin:0}}>AI査定 ・ 古物台帳記録</p></div>
-    <Box title="スタッフログイン">
-      <Input label="スタッフID" value={staffId} onChange={setStaffId} placeholder="例: staff001" required/>
-      <Input label="パスワード（4桁）" value={password} onChange={setPassword} placeholder="4桁の数字" type="password" required/>
-      <Btn onClick={go} disabled={!staffId.trim()||!password.trim()} loading={loading}>ログイン</Btn>
-      {err&&<p style={{fontSize:12,color:cl.danger,textAlign:"center",marginTop:10,fontFamily:font}}>{err}</p>}
-    </Box>
-  </div>);
-}
-
-// ─── Main App ───────────────────────────────────────────────────────
-export default function Home(){
-  const [user,setUser]=useState(null);
-  const [tab,setTab]=useState("appraisal");
-  const [mounted,setMounted]=useState(false);
-
-  useEffect(()=>{setMounted(true)},[]);
-
-  if(!mounted) return null;
-  if(!user) return <LoginScreen onLogin={setUser}/>;
-
-  const tabs=[
-    {id:"appraisal",label:"査定"},
-    {id:"legal",label:"台帳記録"}
-  ];
-
-  return(
-    <div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",background:cl.bg,fontFamily:font}}>
-      <style>{"@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}input,select,textarea{font-family:'Noto Sans JP',sans-serif}input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}"}</style>
-
-      <div style={{padding:"14px 16px",background:cl.surface,borderBottom:"1px solid "+cl.border,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div>
-          <h1 style={{margin:0,fontSize:16,fontWeight:800,color:cl.accent,letterSpacing:1.5}}>出張買取</h1>
-          <p style={{margin:"1px 0 0",fontSize:10,color:cl.textD}}>{user.staffName}さん</p>
-        </div>
-
-        <button
-          onClick={()=>setUser(null)}
-          style={{
-            background:"none",
-            border:"1px solid "+cl.border,
-            borderRadius:4,
-            padding:"4px 10px",
-            fontSize:10,
-            color:cl.textD,
-            cursor:"pointer",
-            fontFamily:font
-          }}
-        >
-          ログアウト
-        </button>
+  return (
+    <div style={{ marginBottom:14 }}>
+      <div onClick={() => ref.current?.click()}
+        style={{ border:"2px dashed "+cl.border, borderRadius:8, padding:"18px 16px",
+          textAlign:"center", cursor:"pointer", background:cl.surfAlt }}>
+        <div style={{ width:32, height:32, margin:"0 auto 4px", borderRadius:"50%",
+          border:"2px solid "+cl.textD, display:"flex", alignItems:"center", justifyContent:"center",
+          fontSize:18, color:cl.textD }}>+</div>
+        <p style={{ margin:0, fontSize:12, color:cl.textM, fontFamily:font }}>写真を追加</p>
+        <input ref={ref} type="file" accept="image/*" multiple capture="environment"
+          style={{ display:"none" }} onChange={e => add(e.target.files)} />
       </div>
+      {images.length > 0 && (
+        <div style={{ display:"flex", gap:8, marginTop:8, flexWrap:"wrap" }}>
+          {images.map((img, i) => (
+            <div key={i} style={{ position:"relative", width:64, height:64, borderRadius:6,
+              overflow:"hidden", border:"1px solid "+cl.border }}>
+              <img src={img.preview} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+              <button onClick={() => setImages(p => p.filter((_, j) => j !== i))}
+                style={{ position:"absolute", top:1, right:1, width:18, height:18, borderRadius:"50%",
+                  background:"rgba(0,0,0,.5)", color:"#fff", border:"none", fontSize:10,
+                  cursor:"pointer", lineHeight:"16px", padding:0 }}>x</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {photoGuide && (
+        <div style={{ marginTop:10, padding:"10px 12px", background:"#F8F6F1",
+          borderRadius:6, border:"1px solid "+cl.border }}>
+          <p style={{ margin:"0 0 6px", fontSize:11, fontWeight:600, color:cl.accent, fontFamily:font }}>撮影ガイド</p>
+          <p style={{ margin:0, fontSize:11, color:cl.textM, fontFamily:font, lineHeight:1.8 }}>
+            {photoGuide.join(" / ")}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
-      <div style={{display:"flex",background:cl.surface,borderBottom:"1px solid "+cl.border,position:"sticky",top:0,zIndex:100}}>
-        {tabs.map(t=>(
-          <button
-            key={t.id}
-            onClick={()=>setTab(t.id)}
-            style={{
-              flex:1,
-              padding:"11px 0",
-              background:"none",
-              border:"none",
-              borderBottom:tab===t.id?"2px solid "+cl.accent:"2px solid transparent",
-              color:tab===t.id?cl.accent:cl.textD,
-              fontSize:12,
-              fontWeight:tab===t.id?700:400,
-              cursor:"pointer",
-              fontFamily:font
-            }}
-          >
-            {t.label}
+function AuthGuide({ authGuide }) {
+  if (!authGuide) return null;
+  return (
+    <Box title="真贋確認ガイド" type="auth">
+      <p style={{ margin:"0 0 12px", fontSize:13, color:cl.text, lineHeight:1.9, fontFamily:font }}>{authGuide.summary}</p>
+      <div style={{ borderTop:"1px solid "+cl.authBorder, paddingTop:12 }}>
+        {authGuide.checks.map((c, i) => {
+          const [t, ...r] = c.split(" — ");
+          return (
+            <div key={i} style={{ padding:"10px 12px", background:cl.white, borderRadius:6,
+              marginBottom:6, border:"1px solid "+cl.authBorder }}>
+              <p style={{ margin:0, fontSize:12, fontWeight:700, color:cl.text, fontFamily:font }}>{t}</p>
+              {r.length > 0 && <p style={{ margin:"4px 0 0", fontSize:12, color:cl.textM, lineHeight:1.7, fontFamily:font }}>{r.join(" — ")}</p>}
+            </div>
+          );
+        })}
+      </div>
+    </Box>
+  );
+}
+
+// ─── 単品査定結果表示 ─────────────────────────────────────────────────
+function PriceResult({ result }) {
+  const trend = t => t === "上昇" ? "↑ 上昇" : t === "下降" ? "↓ 下降" : "→ 安定";
+  return (
+    <>
+      {result.identified_item && (
+        <div style={{ marginBottom:14, padding:12, background:cl.accentBg, borderRadius:8 }}>
+          <p style={{ margin:0, fontSize:11, color:cl.textM, fontFamily:font }}>識別商品</p>
+          <p style={{ margin:"4px 0 0", fontSize:14, fontWeight:600, color:cl.text, fontFamily:font }}>{result.identified_item}</p>
+        </div>
+      )}
+      <div style={{ background:cl.surface, borderRadius:10, border:"1px solid "+cl.accentL, padding:20, marginBottom:14 }}>
+        <div style={{ textAlign:"center", marginBottom:16 }}>
+          <p style={{ fontSize:11, color:cl.textD, margin:"0 0 2px", fontFamily:font }}>推奨買取価格</p>
+          <p style={{ fontSize:30, fontWeight:800, color:cl.accent, margin:0, fontFamily:font }}>{fmt(result.recommended_price)}</p>
+        </div>
+        <div style={{ marginBottom:16 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+            <span style={{ fontSize:11, color:cl.textD, fontFamily:font }}>下限</span>
+            <span style={{ fontSize:11, color:cl.textD, fontFamily:font }}>上限</span>
+          </div>
+          <div style={{ position:"relative", height:8, background:"#E8E4DC", borderRadius:4 }}>
+            <div style={{ position:"absolute", left:0, top:0, height:"100%", width:"100%",
+              background:"linear-gradient(90deg,"+cl.danger+"40,"+cl.success+"40)", borderRadius:4 }} />
+            {result.max_price > result.min_price && (() => {
+              const p = ((result.recommended_price - result.min_price) / (result.max_price - result.min_price)) * 100;
+              return <div style={{ position:"absolute", top:-3, left:Math.min(Math.max(p, 5), 95)+"%",
+                transform:"translateX(-50%)", width:14, height:14, background:cl.accent, borderRadius:"50%",
+                border:"2px solid "+cl.white, boxShadow:"0 1px 3px rgba(0,0,0,.2)" }} />;
+            })()}
+          </div>
+          <div style={{ display:"flex", justifyContent:"space-between", marginTop:4 }}>
+            <span style={{ fontSize:13, fontWeight:700, color:cl.text, fontFamily:font }}>{fmt(result.min_price)}</span>
+            <span style={{ fontSize:13, fontWeight:700, color:cl.text, fontFamily:font }}>{fmt(result.max_price)}</span>
+          </div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:14 }}>
+          <div style={{ padding:"8px 10px", background:"#FDF5F4", borderRadius:6, borderLeft:"3px solid "+cl.danger }}>
+            <p style={{ margin:0, fontSize:10, fontWeight:600, color:cl.danger, fontFamily:font }}>下限の理由</p>
+            <p style={{ margin:"3px 0 0", fontSize:11, color:cl.text, lineHeight:1.5, fontFamily:font }}>{result.min_price_reason || "—"}</p>
+          </div>
+          <div style={{ padding:"8px 10px", background:"#F2F8F4", borderRadius:6, borderLeft:"3px solid "+cl.success }}>
+            <p style={{ margin:0, fontSize:10, fontWeight:600, color:cl.success, fontFamily:font }}>上限の理由</p>
+            <p style={{ margin:"3px 0 0", fontSize:11, color:cl.text, lineHeight:1.5, fontFamily:font }}>{result.max_price_reason || "—"}</p>
+          </div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6 }}>
+          {[
+            ["相場", fmt(result.market_price), cl.text],
+            ["動向", trend(result.market_trend), cl.text],
+            ["信頼度", result.confidence, result.confidence==="高"?cl.success:result.confidence==="低"?cl.danger:cl.accent],
+          ].map(([l, v, co]) => (
+            <div key={l} style={{ padding:"6px 8px", background:cl.surfAlt, borderRadius:6 }}>
+              <p style={{ fontSize:10, color:cl.textD, margin:0, fontFamily:font }}>{l}</p>
+              <p style={{ fontSize:12, fontWeight:600, color:co, margin:"2px 0 0", fontFamily:font }}>{v}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      <Box title="査定根拠">
+        <p style={{ fontSize:12, color:cl.text, margin:0, lineHeight:1.8, fontFamily:font }}>{result.reasoning}</p>
+        {result.price_factors?.map((f, i) => (
+          <div key={i} style={{ padding:"6px 10px", background:cl.surfAlt, borderRadius:4, marginTop:6,
+            fontSize:11, color:cl.textM, fontFamily:font, borderLeft:"3px solid "+cl.accentL }}>{f}</div>
+        ))}
+      </Box>
+      {result.customer_explanation && (
+        <Box title="お客様への説明文" type="staff">
+          <p style={{ margin:0, fontSize:13, color:cl.text, lineHeight:2, fontFamily:font }}>{result.customer_explanation}</p>
+        </Box>
+      )}
+    </>
+  );
+}
+
+// ─── 一括査定結果カード ───────────────────────────────────────────────
+function BulkResultCard({ result, index }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ background:cl.surface, borderRadius:8, border:"1px solid "+cl.border, marginBottom:10, overflow:"hidden" }}>
+      <div onClick={() => setOpen(o => !o)}
+        style={{ padding:"12px 14px", display:"flex", justifyContent:"space-between",
+          alignItems:"center", cursor:"pointer", background:cl.surfAlt }}>
+        <div>
+          <p style={{ margin:0, fontSize:12, fontWeight:700, color:cl.text, fontFamily:font }}>
+            商品{index + 1}：{result.identified_item || "不明"}
+          </p>
+          <p style={{ margin:"2px 0 0", fontSize:11, color:cl.textM, fontFamily:font }}>
+            信頼度: {result.confidence} ／ 推奨: {fmt(result.recommended_price)}
+          </p>
+        </div>
+        <span style={{ fontSize:18, color:cl.textD }}>{open ? "▲" : "▼"}</span>
+      </div>
+      {open && (
+        <div style={{ padding:"12px 14px" }}>
+          <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+            {[["下限",fmt(result.min_price),cl.danger],["推奨",fmt(result.recommended_price),cl.accent],["上限",fmt(result.max_price),cl.success]].map(([l,v,co]) => (
+              <div key={l} style={{ flex:1, padding:"8px 6px", background:cl.surfAlt, borderRadius:6, textAlign:"center" }}>
+                <p style={{ margin:0, fontSize:10, color:cl.textD, fontFamily:font }}>{l}</p>
+                <p style={{ margin:"2px 0 0", fontSize:13, fontWeight:700, color:co, fontFamily:font }}>{v}</p>
+              </div>
+            ))}
+          </div>
+          <p style={{ margin:0, fontSize:11, color:cl.textM, lineHeight:1.7, fontFamily:font }}>{result.reasoning}</p>
+          {result.customer_explanation && (
+            <div style={{ marginTop:8, padding:"8px 10px", background:cl.staffBg,
+              borderRadius:6, border:"1px solid "+cl.staffBorder }}>
+              <p style={{ margin:0, fontSize:11, color:cl.text, lineHeight:1.7, fontFamily:font }}>{result.customer_explanation}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── 査定タブ ─────────────────────────────────────────────────────────
+function AppraisalTab({ staffName, onSendToLedger }) {
+  const [mode, setMode] = useState("single"); // "single" | "bulk"
+
+  // 単品モード
+  const [customerName, setCustomerName] = useState("");
+  const [catId, setCatId] = useState("");
+  const [fields, setFields] = useState({});
+  const [cond, setCond] = useState("");
+  const [images, setImages] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+
+  // 一括モード
+  const emptyBulkItem = { category:"", name:"", quantity:"1", feature:"", condition:"" };
+  const [bulkCustomerName, setBulkCustomerName] = useState("");
+  const [bulkItems, setBulkItems] = useState([{ ...emptyBulkItem }]);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkResults, setBulkResults] = useState([]);
+  const [bulkError, setBulkError] = useState("");
+
+  const config = CATEGORY_CONFIG[catId];
+  const hasImg = images.length > 0;
+  const hasReq = config ? config.fields.filter(f => f.required).every(f => fields[f.key]?.trim()) : false;
+  const singleOk = catId && (hasImg || hasReq);
+  const bulkOk = bulkItems.every(it => it.name.trim());
+
+  // 単品査定実行
+  const runSingle = async () => {
+    setLoading(true); setError(""); setResult(null);
+    try {
+      const data = await callAppraisal({
+        category: config?.label || "",
+        fields,
+        condition: CONDITIONS.find(x => x.id === cond)?.label || cond,
+        image: images[0] || null,
+      });
+      setResult(data);
+      try {
+        await gasPost({
+          action: "saveAppraisalLog",
+          customerName: customerName.trim(),
+          itemName: data.identified_item || fields.name || "",
+          priceEstimate: fmt(data.recommended_price),
+          staffName: staffName || "",
+          remarks: config?.label || "",
+        });
+      } catch (e) { /* ログ保存失敗は無視 */ }
+    } catch (e) { setError(e.message || "査定失敗"); }
+    setLoading(false);
+  };
+
+  // 一括査定実行
+  const runBulk = async () => {
+    setBulkLoading(true); setBulkError(""); setBulkResults([]);
+    try {
+      const results = await callBulkAppraisal(bulkItems);
+      setBulkResults(results);
+      // 査定ログ保存（一括）
+      for (const r of results) {
+        try {
+          await gasPost({
+            action: "saveAppraisalLog",
+            customerName: bulkCustomerName.trim(),
+            itemName: r.identified_item || "",
+            priceEstimate: fmt(r.recommended_price),
+            staffName: staffName || "",
+            remarks: "一括査定",
+          });
+        } catch (e) { /* 無視 */ }
+      }
+    } catch (e) { setBulkError(e.message || "一括査定失敗"); }
+    setBulkLoading(false);
+  };
+
+  // 台帳へ引き継ぎ（単品）
+  const sendSingleToLedger = () => {
+    if (!result) return;
+    onSendToLedger({
+      customerName: customerName,
+      items: [{
+        category: config?.label || "",
+        name: result.identified_item || fields.name || "",
+        quantity: "1",
+        feature: fields.condition_detail || "",
+        purchasePrice: String(result.recommended_price || ""),
+        remarks: result.customer_explanation || "",
+        aiEstimate: fmt(result.recommended_price),
+      }],
+    });
+  };
+
+  // 台帳へ引き継ぎ（一括）
+  const sendBulkToLedger = () => {
+    if (!bulkResults.length) return;
+    const items = bulkItems.map((it, i) => {
+      const r = bulkResults.find(r => r.item_index === i + 1) || bulkResults[i] || {};
+      return {
+        category: it.category,
+        name: r.identified_item || it.name,
+        quantity: it.quantity || "1",
+        feature: it.feature || "",
+        purchasePrice: String(r.recommended_price || ""),
+        remarks: r.customer_explanation || "",
+        aiEstimate: fmt(r.recommended_price),
+      };
+    });
+    onSendToLedger({ customerName: bulkCustomerName, items });
+  };
+
+  const updateBulkItem = (idx, key, val) =>
+    setBulkItems(p => p.map((it, i) => i === idx ? { ...it, [key]: val } : it));
+
+  return (
+    <div style={{ padding:16 }}>
+      {/* モード切替 */}
+      <div style={{ display:"flex", background:cl.surface, border:"1px solid "+cl.border,
+        borderRadius:8, marginBottom:16, overflow:"hidden" }}>
+        {[["single","単品査定"],["bulk","一括査定"]].map(([id, label]) => (
+          <button key={id} onClick={() => setMode(id)}
+            style={{ flex:1, padding:"11px 0", background:mode===id?cl.accentBg:"transparent",
+              border:"none", color:mode===id?cl.accent:cl.textD,
+              fontSize:13, fontWeight:mode===id?700:400, cursor:"pointer", fontFamily:font }}>
+            {label}
           </button>
         ))}
       </div>
 
-      {tab==="appraisal" && <AppraisalTab staffName={user.staffName}/>}
-      {tab==="legal" && <LegalTab staffName={user.staffName}/>}
+      {/* ─── 単品査定 ─── */}
+      {mode === "single" && (
+        <>
+          <Box title="顧客名">
+            <Input label="顧客名" value={customerName} onChange={setCustomerName} placeholder="例: 山田 太郎" />
+          </Box>
+          <Box title="カテゴリを選択">
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:6 }}>
+              {Object.entries(CATEGORY_CONFIG).map(([id, cfg]) => (
+                <button key={id} onClick={() => { setCatId(id); setFields({}); setResult(null); setError(""); }}
+                  style={{ padding:"9px 10px", textAlign:"left", cursor:"pointer",
+                    background:catId===id?cl.accentBg:cl.surfAlt,
+                    border:"1px solid "+(catId===id?cl.accentL:cl.border), borderRadius:6 }}>
+                  <span style={{ fontSize:12, fontWeight:600, color:catId===id?cl.accent:cl.text,
+                    display:"block", fontFamily:font }}>{cfg.label}</span>
+                  <span style={{ fontSize:10, color:cl.textD, fontFamily:font }}>{cfg.examples}</span>
+                </button>
+              ))}
+            </div>
+          </Box>
+          {catId && config && (
+            <>
+              {config.authGuide && <AuthGuide authGuide={config.authGuide} />}
+              <Box title="商品写真">
+                <ImageUploader images={images} setImages={setImages} photoGuide={config.photoGuide} />
+              </Box>
+              <Box title={config.label + "の詳細"} sub="わかる範囲で">
+                {config.fields.map(f => (
+                  <Input key={f.key} label={f.label} value={fields[f.key] || ""}
+                    onChange={v => setFields(p => ({ ...p, [f.key]: v }))}
+                    placeholder={f.placeholder} required={f.required} multiline={f.multiline} />
+                ))}
+                <Sel label="状態ランク" value={cond} onChange={setCond}
+                  options={CONDITIONS.map(x => ({ value:x.id, label:x.label + " — " + x.desc }))} />
+              </Box>
+              <Btn onClick={runSingle} disabled={!singleOk} loading={loading}>AI査定を実行</Btn>
+            </>
+          )}
+          {error && (
+            <div style={{ marginTop:14, padding:14, background:"#FDF2F0",
+              border:"1px solid #E8C4BF", borderRadius:8 }}>
+              <p style={{ color:cl.danger, margin:0, fontSize:12, fontFamily:font, wordBreak:"break-word" }}>{error}</p>
+            </div>
+          )}
+          {result && (
+            <div style={{ marginTop:20 }}>
+              <PriceResult result={result} />
+              <div style={{ marginTop:12 }}>
+                <Btn onClick={sendSingleToLedger} variant="secondary">
+                  📋 この査定内容を台帳に引き継ぐ
+                </Btn>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ─── 一括査定 ─── */}
+      {mode === "bulk" && (
+        <>
+          <Box title="顧客名">
+            <Input label="顧客名" value={bulkCustomerName} onChange={setBulkCustomerName} placeholder="例: 山田 太郎" />
+          </Box>
+          {bulkItems.map((it, idx) => (
+            <Box key={idx} title={"商品 " + (idx + 1)}>
+              <Sel label="品目（カテゴリ）" value={it.category} onChange={v => updateBulkItem(idx, "category", v)}
+                options={Object.values(CATEGORY_CONFIG).map(c => ({ value:c.label, label:c.label }))} />
+              <Input label="商品名" value={it.name} onChange={v => updateBulkItem(idx, "name", v)}
+                placeholder="例: ルイヴィトン ネヴァーフル" required />
+              <Input label="数量" value={it.quantity} onChange={v => updateBulkItem(idx, "quantity", v)}
+                placeholder="例: 1" type="number" />
+              <Input label="特徴・詳細" value={it.feature} onChange={v => updateBulkItem(idx, "feature", v)}
+                placeholder="色、サイズ、付属品など" multiline />
+              <Sel label="状態ランク" value={it.condition} onChange={v => updateBulkItem(idx, "condition", v)}
+                options={CONDITIONS.map(x => ({ value:x.label, label:x.label + " — " + x.desc }))} />
+              {bulkItems.length > 1 && (
+                <div style={{ marginTop:8 }}>
+                  <Btn onClick={() => setBulkItems(p => p.filter((_, i) => i !== idx))} variant="danger" small>
+                    この商品を削除
+                  </Btn>
+                </div>
+              )}
+            </Box>
+          ))}
+          <div style={{ marginBottom:14 }}>
+            <Btn onClick={() => setBulkItems(p => [...p, { ...emptyBulkItem }])} variant="secondary">
+              + 商品を追加
+            </Btn>
+          </div>
+          <Btn onClick={runBulk} disabled={!bulkOk} loading={bulkLoading}>
+            一括AI査定を実行（{bulkItems.length}点）
+          </Btn>
+          {bulkError && (
+            <div style={{ marginTop:14, padding:14, background:"#FDF2F0",
+              border:"1px solid #E8C4BF", borderRadius:8 }}>
+              <p style={{ color:cl.danger, margin:0, fontSize:12, fontFamily:font }}>{bulkError}</p>
+            </div>
+          )}
+          {bulkResults.length > 0 && (
+            <div style={{ marginTop:20 }}>
+              <p style={{ fontSize:13, fontWeight:700, color:cl.accent, marginBottom:10, fontFamily:font }}>
+                一括査定結果（{bulkResults.length}点）
+              </p>
+              {bulkResults.map((r, i) => <BulkResultCard key={i} result={r} index={i} />)}
+              <div style={{ marginTop:12 }}>
+                <Btn onClick={sendBulkToLedger} variant="secondary">
+                  📋 一括査定結果を台帳に引き継ぐ
+                </Btn>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── 台帳タブ ─────────────────────────────────────────────────────────
+function LegalTab({ staffName, pendingLedger, onPendingConsumed }) {
+  const now = new Date();
+  const ds = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+
+  const emptyItem = {
+    category: "", name: "", quantity: "1", feature: "",
+    purchasePrice: "", remarks: "", aiEstimate: "",
+  };
+
+  const makeEmptyVisit = () => ({
+    date: ds, staffName: staffName || "",
+    sellerName: "", sellerPhone: "", sellerAddress: "",
+    sellerOccupation: "", sellerAge: "",
+    sellerIdType: "", sellerIdNumber: "",
+    idVerifyMethod: "", idVerifiedBy: staffName || "",
+  });
+
+  const [visit, setVisit] = useState(makeEmptyVisit());
+  const [items, setItems] = useState([{ ...emptyItem }]);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState("");
+  const [error, setError] = useState("");
+  const [showPendingBanner, setShowPendingBanner] = useState(false);
+
+  const uv = (k, v) => setVisit(p => ({ ...p, [k]: v }));
+  const ui = (idx, k, v) => setItems(p => p.map((it, i) => i === idx ? { ...it, [k]: v } : it));
+
+  // 査定画面からの引き継ぎ
+  useEffect(() => {
+    if (pendingLedger) {
+      setVisit(p => ({ ...p, sellerName: pendingLedger.customerName || p.sellerName }));
+      if (pendingLedger.items && pendingLedger.items.length > 0) {
+        setItems(pendingLedger.items.map(it => ({
+          category: it.category || "",
+          name: it.name || "",
+          quantity: it.quantity || "1",
+          feature: it.feature || "",
+          purchasePrice: it.purchasePrice || "",
+          remarks: it.remarks || "",
+          aiEstimate: it.aiEstimate || "",
+        })));
+      }
+      setShowPendingBanner(true);
+      onPendingConsumed();
+    }
+  }, [pendingLedger]);
+
+  const visReq = ["sellerName","sellerPhone","sellerAddress","sellerIdType","sellerIdNumber","staffName"];
+  const formOk = visReq.every(f => visit[f]?.trim()) &&
+    items.every(it => it.name?.trim() && it.purchasePrice?.trim());
+
+  const resetForm = () => {
+    setVisit(makeEmptyVisit());
+    setItems([{ ...emptyItem }]);
+    setShowPendingBanner(false);
+  };
+
+  const save = async () => {
+    setSaving(true); setError(""); setSaved("");
+    try {
+      const data = await gasPost({
+        action: "saveLedger",
+        transactionDate: visit.date,
+        sellerName: visit.sellerName,
+        sellerPhone: visit.sellerPhone,
+        sellerAddress: visit.sellerAddress,
+        sellerOccupation: visit.sellerOccupation,
+        sellerAge: visit.sellerAge,
+        sellerIdType: visit.sellerIdType,
+        sellerIdNumber: visit.sellerIdNumber,
+        idVerifyMethod: visit.idVerifyMethod,
+        idVerifiedBy: visit.idVerifiedBy,
+        staffName: visit.staffName,
+        items: items.map(it => ({
+          category: it.category,
+          name: it.name,
+          quantity: it.quantity || "1",
+          feature: it.feature,
+          purchasePrice: it.purchasePrice,
+          remarks: it.remarks,
+          aiEstimate: it.aiEstimate,
+        })),
+      });
+      setSaved("保存完了（案件ID: " + data.caseId + "）");
+      resetForm();
+    } catch (e) { setError(e.message || "保存に失敗しました"); }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ padding:16 }}>
+      {/* 査定引き継ぎバナー */}
+      {showPendingBanner && (
+        <div style={{ padding:"12px 14px", background:"#F0F7F2", border:"1px solid "+cl.staffBorder,
+          borderRadius:8, marginBottom:14, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <p style={{ margin:0, fontSize:12, color:cl.staffAccent, fontWeight:600, fontFamily:font }}>
+            📋 査定画面の内容を反映しました。手修正してから保存してください。
+          </p>
+          <button onClick={() => setShowPendingBanner(false)}
+            style={{ background:"none", border:"none", fontSize:16, cursor:"pointer", color:cl.textD }}>×</button>
+        </div>
+      )}
+
+      <div style={{ background:cl.accentBg, borderRadius:8, padding:14, marginBottom:16,
+        border:"1px solid "+cl.accentL }}>
+        <p style={{ fontSize:12, fontWeight:700, color:cl.accent, margin:"0 0 6px", fontFamily:font }}>
+          古物営業法に基づく記録義務
+        </p>
+        <p style={{ fontSize:11, color:cl.textM, margin:0, lineHeight:1.7, fontFamily:font }}>
+          第16条・第17条により記録・3年間保存義務があります。
+        </p>
+      </div>
+
+      {/* 取引情報 */}
+      <Box title="取引情報">
+        <Input label="取引日" value={visit.date} onChange={v => uv("date", v)} type="date" required />
+        <Input label="担当者" value={visit.staffName} onChange={v => uv("staffName", v)} required placeholder="担当者名" />
+      </Box>
+
+      {/* 売主情報 */}
+      <Box title="売主情報">
+        <Input label="氏名" value={visit.sellerName} onChange={v => uv("sellerName", v)} required placeholder="山田 太郎" />
+        <Input label="住所" value={visit.sellerAddress} onChange={v => uv("sellerAddress", v)} required placeholder="東京都○○区○○" />
+        <Input label="電話番号" value={visit.sellerPhone} onChange={v => uv("sellerPhone", v)} required placeholder="090-XXXX-XXXX" />
+        <Input label="職業" value={visit.sellerOccupation} onChange={v => uv("sellerOccupation", v)} placeholder="例: 会社員" />
+        <Input label="年齢" value={visit.sellerAge} onChange={v => uv("sellerAge", v)} placeholder="例: 35" type="number" />
+      </Box>
+
+      {/* 本人確認 */}
+      <Box title="本人確認">
+        <Sel label="身分証の種類" value={visit.sellerIdType} onChange={v => uv("sellerIdType", v)} options={ID_TYPES} required />
+        <Input label="身分証番号" value={visit.sellerIdNumber} onChange={v => uv("sellerIdNumber", v)} required placeholder="番号" />
+        <Sel label="本人確認方法" value={visit.idVerifyMethod} onChange={v => uv("idVerifyMethod", v)} options={ID_VERIFY_METHODS} />
+        <Input label="確認者" value={visit.idVerifiedBy} onChange={v => uv("idVerifiedBy", v)} required placeholder="確認者名" />
+      </Box>
+
+      {/* 商品 */}
+      {items.map((it, idx) => (
+        <Box key={idx} title={"商品 " + (idx + 1)}>
+          <Sel label="品目（カテゴリ）" value={it.category} onChange={v => ui(idx, "category", v)}
+            options={Object.values(CATEGORY_CONFIG).map(c => ({ value:c.label, label:c.label }))} />
+          <Input label="商品名" value={it.name} onChange={v => ui(idx, "name", v)}
+            required placeholder="例: ロレックス デイトナ" />
+          <Input label="数量" value={it.quantity} onChange={v => ui(idx, "quantity", v)}
+            placeholder="例: 1" type="number" />
+          <Input label="特徴・詳細" value={it.feature} onChange={v => ui(idx, "feature", v)}
+            placeholder="色、付属品、状態など" multiline />
+          <Input label="買取金額（円）" value={it.purchasePrice} onChange={v => ui(idx, "purchasePrice", v)}
+            type="number" required />
+          {it.aiEstimate && (
+            <div style={{ padding:"8px 12px", background:cl.accentBg, borderRadius:6,
+              marginBottom:10, border:"1px solid "+cl.accentL }}>
+              <p style={{ margin:0, fontSize:11, color:cl.textM, fontFamily:font }}>
+                AI査定目安：<span style={{ fontWeight:700, color:cl.accent }}>{it.aiEstimate}</span>
+              </p>
+            </div>
+          )}
+          <Input label="備考" value={it.remarks} onChange={v => ui(idx, "remarks", v)}
+            placeholder="品目、状態、付属品など" multiline />
+          {items.length > 1 && (
+            <div style={{ marginTop:4 }}>
+              <Btn onClick={() => setItems(p => p.filter((_, i) => i !== idx))} variant="danger" small>
+                この商品を削除
+              </Btn>
+            </div>
+          )}
+        </Box>
+      ))}
+
+      <div style={{ marginBottom:14 }}>
+        <Btn onClick={() => setItems(p => [...p, { ...emptyItem }])} variant="secondary">+ 商品を追加</Btn>
+      </div>
+
+      <Btn onClick={save} disabled={saving || !formOk} loading={saving}>保存</Btn>
+
+      {saved && (
+        <div style={{ marginTop:10, padding:12, background:"#F0F7F2",
+          border:"1px solid "+cl.staffBorder, borderRadius:8 }}>
+          <p style={{ margin:0, fontSize:13, fontWeight:600, color:cl.success, fontFamily:font }}>{saved}</p>
+        </div>
+      )}
+      {error && (
+        <div style={{ marginTop:10, padding:12, background:"#FDF2F0",
+          border:"1px solid #E8C4BF", borderRadius:8 }}>
+          <p style={{ margin:0, fontSize:12, color:cl.danger, fontFamily:font }}>{error}</p>
+        </div>
+      )}
+      {!formOk && !saved && (
+        <p style={{ fontSize:11, color:cl.danger, textAlign:"center", marginTop:8, fontFamily:font }}>
+          必須項目（*）と各商品の商品名・金額を入力してください
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── ログイン画面 ─────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [staffId, setStaffId] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const go = async () => {
+    if (!staffId.trim() || !password.trim()) { setErr("IDとパスワードを入力してください"); return; }
+    if (!/^\d{4}$/.test(password)) { setErr("パスワードは4桁の数字です"); return; }
+    setLoading(true); setErr("");
+    try {
+      const data = await gasPost({ action:"login", staffId:staffId.trim(), password:password.trim() });
+      onLogin({ staffId:data.staffId, staffName:data.staffName });
+    } catch (e) { setErr(e.message || "ログイン失敗"); }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ maxWidth:400, margin:"0 auto", minHeight:"100vh", background:cl.bg, fontFamily:font,
+      display:"flex", flexDirection:"column", justifyContent:"center", padding:24 }}>
+      <div style={{ textAlign:"center", marginBottom:36 }}>
+        <h1 style={{ fontSize:20, fontWeight:800, color:cl.accent, margin:"0 0 4px", letterSpacing:2 }}>出張買取</h1>
+        <p style={{ fontSize:12, color:cl.textD, margin:0 }}>AI査定 ・ 古物台帳記録</p>
+      </div>
+      <Box title="スタッフログイン">
+        <Input label="スタッフID" value={staffId} onChange={setStaffId} placeholder="例: staff001" required />
+        <Input label="パスワード（4桁）" value={password} onChange={setPassword} placeholder="4桁の数字" type="password" required />
+        <Btn onClick={go} disabled={!staffId.trim() || !password.trim()} loading={loading}>ログイン</Btn>
+        {err && <p style={{ fontSize:12, color:cl.danger, textAlign:"center", marginTop:10, fontFamily:font }}>{err}</p>}
+      </Box>
+    </div>
+  );
+}
+
+// ─── メインアプリ ─────────────────────────────────────────────────────
+export default function Home() {
+  const [user, setUser] = useState(null);
+  const [tab, setTab] = useState("appraisal");
+  const [mounted, setMounted] = useState(false);
+  // 査定→台帳 引き継ぎデータ
+  const [pendingLedger, setPendingLedger] = useState(null);
+
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted) return null;
+  if (!user) return <LoginScreen onLogin={setUser} />;
+
+  const handleSendToLedger = (data) => {
+    setPendingLedger(data);
+    setTab("legal");
+  };
+
+  const tabs = [
+    { id:"appraisal", label:"査定" },
+    { id:"legal", label:"台帳記録" },
+  ];
+
+  return (
+    <div style={{ maxWidth:480, margin:"0 auto", minHeight:"100vh", background:cl.bg, fontFamily:font }}>
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}input,select,textarea{font-family:'Noto Sans JP',sans-serif}input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}"}</style>
+
+      <div style={{ padding:"14px 16px", background:cl.surface, borderBottom:"1px solid "+cl.border,
+        display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div>
+          <h1 style={{ margin:0, fontSize:16, fontWeight:800, color:cl.accent, letterSpacing:1.5 }}>出張買取</h1>
+          <p style={{ margin:"1px 0 0", fontSize:10, color:cl.textD }}>{user.staffName}さん</p>
+        </div>
+        <button onClick={() => setUser(null)}
+          style={{ background:"none", border:"1px solid "+cl.border, borderRadius:4,
+            padding:"4px 10px", fontSize:10, color:cl.textD, cursor:"pointer", fontFamily:font }}>
+          ログアウト
+        </button>
+      </div>
+
+      <div style={{ display:"flex", background:cl.surface, borderBottom:"1px solid "+cl.border,
+        position:"sticky", top:0, zIndex:100 }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ flex:1, padding:"11px 0", background:"none", border:"none",
+              borderBottom:tab===t.id?"2px solid "+cl.accent:"2px solid transparent",
+              color:tab===t.id?cl.accent:cl.textD,
+              fontSize:12, fontWeight:tab===t.id?700:400, cursor:"pointer", fontFamily:font }}>
+            {t.label}
+            {t.id === "legal" && pendingLedger && (
+              <span style={{ marginLeft:4, background:cl.accent, color:cl.white,
+                borderRadius:"50%", fontSize:9, padding:"1px 5px" }}>●</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === "appraisal" && (
+        <AppraisalTab staffName={user.staffName} onSendToLedger={handleSendToLedger} />
+      )}
+      {tab === "legal" && (
+        <LegalTab
+          staffName={user.staffName}
+          pendingLedger={pendingLedger}
+          onPendingConsumed={() => setPendingLedger(null)}
+        />
+      )}
     </div>
   );
 }
