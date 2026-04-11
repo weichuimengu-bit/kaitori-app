@@ -362,9 +362,30 @@ function buildAppraisalPrompt(categoryKey, category, fields, condition, hasImage
   const itemLabel = (fields.brand ? fields.brand+" " : "") + (fields.name || category || "");
   const imageCheckPoints = IMAGE_CHECK_POINTS[categoryKey] || IMAGE_CHECK_POINTS.other;
 
+  const year = new Date().getFullYear();
   return `あなたは出張買取専門のプロ査定士です。以下の手順で査定してください。
 
-【手順1】ウェブ検索で「${itemLabel} 買取価格 相場 ${new Date().getFullYear()}」を必ず検索し、複数の買取店・オークション・フリマの実勢価格を確認する。
+【手順1】以下の3サイトを順番に必ず検索し、実際の取引価格を確認する。各サイトで確認した価格帯を必ず reasoning に明記すること。参照できなかった場合はその旨を記載すること。
+
+■ メルカリ（日本国内フリマ・実際に売れた価格）
+検索クエリ：「メルカリ ${itemLabel} sold 相場 ${year}」
+→ 直近3ヶ月以内に実際に売れた価格（sold済み）を優先して確認する
+→ 出品中の価格ではなく「売れた価格・売り切れ価格」を参照すること
+
+■ ヤフオク（日本国内オークション・落札価格）
+検索クエリ：「ヤフオク ${itemLabel} 落札相場 ${year}」または「aucfan ${itemLabel}」
+→ 直近3ヶ月の落札相場を確認する
+→ 即決価格・落札価格の両方を参考にする
+
+■ eBay（海外マーケット・グローバル需要の参考）
+検索クエリ：「eBay ${itemLabel} sold completed listings ${year}」
+→ 落札済み（completed/sold）の価格のみ参照する（出品中は参照しない）
+→ eBayの価格はドル建てのため、参照時点の為替レートで円換算する
+→ 海外送料・関税・手数料（約15〜20%）を差し引いた実質価格を算出する
+→ eBayは特に高級時計・ブランド品・希少品・骨董品で海外需要が高く参考になる
+
+【手順1完了後】reasoning に以下の形式で必ず記載すること：
+「メルカリ相場：〇万円〜〇万円（直近〇件確認）/ ヤフオク落札相場：〇万円〜〇万円（直近〇件確認）/ eBay相場：$〇〜$〇 → 円換算で約〇万円〜〇万円（手数料控除後）」
 
 【手順2】以下の買取業の基本原則に従い、減額要因を厳密に評価する：
 ・買取後の再販コスト（クリーニング・点検・撮影・掲載・人件費）が必ず発生する
